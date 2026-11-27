@@ -1551,12 +1551,12 @@ fn resize_u8(
     dst_h: u32,
     args: &ProcessArgs,
 ) -> Result<Vec<u8>> {
-    use zenresize::{PixelDescriptor, ResizeConfig, Resizer};
+    use zenresize::{PixelFormat, ResizeConfig, Resizer};
 
     let filter = args.down_filter.unwrap_or(args.filter).to_zenresize();
     let config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
         .filter(filter)
-        .format(PixelDescriptor::RGB8_SRGB)
+        .format(PixelFormat::RGB8_SRGB)
         .sharpen(args.sharpen)
         .linear()
         .build();
@@ -1573,12 +1573,12 @@ fn resize_f32(
     dst_h: u32,
     args: &ProcessArgs,
 ) -> Result<Vec<f32>> {
-    use zenresize::{PixelDescriptor, ResizeConfig, Resizer};
+    use zenresize::{PixelFormat, ResizeConfig, Resizer};
 
     let filter = args.down_filter.unwrap_or(args.filter).to_zenresize();
     let config = ResizeConfig::builder(src_w, src_h, dst_w, dst_h)
         .filter(filter)
-        .format(PixelDescriptor::RGBF32_LINEAR)
+        .format(PixelFormat::RGBF32_LINEAR)
         .sharpen(args.sharpen)
         .build();
 

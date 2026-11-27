@@ -437,7 +437,7 @@ fn signals<'a>(req: &ScrubRequest<'_>, image: &'a [u8]) -> Result<Signals<'a>, E
             return Err(Error::Malformed("duplicate ISO gain-map metadata"));
         }
         if span.kind == MarkerKind::App(1) && span.payload.starts_with(XMP) {
-            req.packet(span.payload.len())?;
+            req.check_metadata_budget(span.payload.len())?;
             let xml = core::str::from_utf8(&span.payload[XMP.len()..])
                 .map_err(|_| Error::Malformed("XMP UTF-8"))?;
             if s.xmp.replace(xml).is_some() {
@@ -480,7 +480,7 @@ fn normalize_icc<'a>(
         a.checked_add(p.len())
             .ok_or(Error::Limit(zencodec::LimitKind::MetadataSize))
     })?;
-    req.packet(total)?;
+    req.check_metadata_budget(total)?;
     if !req.normalize_icc() || ranges.is_empty() {
         return Ok(());
     }
@@ -538,7 +538,7 @@ fn edited_gain_xmp(
         req.max_metadata(),
         req.pulse(),
     )?;
-    req.packet(merged.len())?;
+    req.check_metadata_budget(merged.len())?;
     let merged = core::str::from_utf8(&merged).map_err(|_| Error::Service("merged XMP UTF-8"))?;
     let packet =
         zenmeta::xmp::Packet::parse(merged).map_err(|_| Error::Service("merged XMP XML"))?;

@@ -201,7 +201,7 @@ pub(super) fn start(
                 details.source_encoding = source_encoding.map(|probe| Box::new(probe) as _);
             }
             ctx.set_info(full);
-            ctx.set_output_descriptor(output.native_format.clone());
+            ctx.set_output_pixel_format(output.native_format.clone());
             let mut facts = InterpretationFacts::new(
                 output.width,
                 output.height,

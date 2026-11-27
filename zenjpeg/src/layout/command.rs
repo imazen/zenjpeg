@@ -73,11 +73,11 @@ pub(super) fn compose_orientation(commands: &[Command]) -> Orientation {
         match cmd {
             Command::AutoOrient(exif) => {
                 if let Some(step) = Orientation::from_exif(*exif) {
-                    o = o.compose(step);
+                    o = o.then(step);
                 }
             }
-            Command::Rotate(r) => o = o.compose((*r).into()),
-            Command::Flip(f) => o = o.compose((*f).into()),
+            Command::Rotate(r) => o = o.then((*r).into()),
+            Command::Flip(f) => o = o.then((*f).into()),
             Command::Crop { .. } | Command::Fit { .. } => {}
         }
     }

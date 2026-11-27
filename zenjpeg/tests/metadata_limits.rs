@@ -173,13 +173,27 @@ fn complete_real_world_zero_of_one_icc_is_readable_by_default() {
                 .iter()
                 .any(|p| p.disposition() == Disposition::Metadata(MetadataKind::Icc))
         );
-        let strict_inv = zenjpeg::JpegDecoderConfig::new()
+        let mut strict_cfg = zenjpeg::JpegDecoderConfig::new();
+        let strict_inner = strict_cfg.inner().clone().strict();
+        *strict_cfg.inner_mut() = strict_inner;
+        let strict_inv = strict_cfg.job().inventory(&jpeg).unwrap();
+        assert_eq!(
+            strict_inv
+                .parts()
+                .iter()
+                .find(|p| p.kind() == PartKind::ScanData)
+                .unwrap()
+                .disposition(),
+            Disposition::Skipped
+        );
+        let no_trunc_inv = zenjpeg::JpegDecoderConfig::new()
             .job()
-            .with_policy(DecodePolicy::none().with_strict(true))
+            .try_with_policy(DecodePolicy::none().with_allow_truncated(false))
+            .unwrap()
             .inventory(&jpeg)
             .unwrap();
         assert_eq!(
-            strict_inv
+            no_trunc_inv
                 .parts()
                 .iter()
                 .find(|p| p.kind() == PartKind::ScanData)
@@ -326,11 +340,12 @@ fn full_probe_discovers_late_primary_metadata_and_requires_its_end() {
         );
         let filtered = config
             .job()
-            .with_policy(
+            .try_with_policy(
                 zencodec::decode::DecodePolicy::none()
                     .with_allow_icc(false)
                     .with_allow_xmp(false),
             )
+            .unwrap()
             .probe_full(&jpeg)
             .unwrap();
         assert!(filtered.metadata().icc_profile.is_none());

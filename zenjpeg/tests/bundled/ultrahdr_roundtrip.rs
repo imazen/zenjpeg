@@ -1339,7 +1339,6 @@ fn codec_hdr_matches_native_for_iso_aliases_and_wide_gamut() {
 
 #[cfg(all(feature = "zencodec", feature = "inventory"))]
 #[test]
-#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn codec_hdr_policy_agrees_with_inventory() {
     use zencodec::decode::{Decode, DecodeJob, DecodePolicy, DecoderConfig};
     use zencodec::inventory::{Disposition, PartKind};
@@ -1354,7 +1353,8 @@ fn codec_hdr_policy_agrees_with_inventory() {
         let job = || {
             zenjpeg::JpegDecoderConfig::new()
                 .job()
-                .with_policy(policy)
+                .try_with_policy(policy)
+                .unwrap()
                 .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
                     target_headroom: Some(4.0),
                 })
@@ -1458,7 +1458,8 @@ fn codec_hdr_obeys_progressive_policy() {
     let job = || {
         zenjpeg::JpegDecoderConfig::new()
             .job()
-            .with_policy(DecodePolicy::none().with_allow_progressive(false))
+            .try_with_policy(DecodePolicy::none().with_allow_progressive(false))
+            .unwrap()
             .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
                 target_headroom: Some(4.0),
             })

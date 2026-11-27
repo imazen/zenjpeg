@@ -29,7 +29,6 @@ fn active_icc(spec: PixelFormat, profile: impl Into<Arc<[u8]>>) -> PixelFormat {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
     for base in [
         PixelFormat::RGB8_SRGB,
@@ -62,9 +61,10 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
                     .with_progressive(progressive)
                     .with_huffman(huffman);
                 let job = || {
-                    config.clone().job().with_metadata_policy(
-                        Metadata::none().with_icc(profile.clone()),
-                        MetadataPolicy::PreserveExact,
+                    config.clone().job().with_unfiltered_metadata(
+                        Metadata::none()
+                            .with_icc(profile.clone())
+                            .filtered(&MetadataPolicy::PreserveExact),
                     )
                 };
                 let legacy = job()
@@ -110,7 +110,6 @@ fn profile_tagged_bytes_match_legacy_packing_and_strided_rows_exactly() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation() {
     let desc = descriptor(PixelFormat::RGB8_SRGB, ADOBE_RGB);
     let raw = [17, 31, 61].repeat(16);
@@ -118,9 +117,10 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
         PixelView::new_with_format_cow(&raw, 4, 4, 12, zenpixels::FormatCow::from_owned(d)).unwrap()
     };
     let job = || {
-        JpegEncoderConfig::new().job().with_metadata_policy(
-            Metadata::none().with_icc(ADOBE_RGB),
-            MetadataPolicy::PreserveExact,
+        JpegEncoderConfig::new().job().with_unfiltered_metadata(
+            Metadata::none()
+                .with_icc(ADOBE_RGB)
+                .filtered(&MetadataPolicy::PreserveExact),
         )
     };
     assert!(
@@ -130,7 +130,8 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
     );
     assert!(
         job()
-            .with_policy(EncodePolicy::none().with_embed_icc(false))
+            .try_with_policy(EncodePolicy::none().with_embed_icc(false))
+            .unwrap()
             .encoder()
             .unwrap()
             .encode(pixels(desc.clone()))
@@ -166,9 +167,10 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
         zenjpeg::encode::EncoderConfig::xyb(87.0, zenjpeg::encode::XybSubsampling::Full);
     assert!(
         xyb.job()
-            .with_metadata_policy(
-                Metadata::none().with_icc(ADOBE_RGB),
-                MetadataPolicy::PreserveExact
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_icc(ADOBE_RGB)
+                    .filtered(&MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap()
@@ -180,9 +182,10 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
     assert!(
         JpegEncoderConfig::new()
             .job()
-            .with_metadata_policy(
-                Metadata::none().with_icc(wrong_channels),
-                MetadataPolicy::PreserveExact
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_icc(wrong_channels)
+                    .filtered(&MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap()
@@ -202,7 +205,6 @@ fn profile_tagged_bytes_refuse_missing_discarded_and_conflicting_interpretation(
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
     use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, UnsupportedOperation};
     let policy = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
@@ -216,14 +218,13 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
             let mut job = config
                 .clone()
                 .job()
-                .with_metadata_policy(metadata.clone(), MetadataPolicy::PreserveExact)
+                .with_unfiltered_metadata(metadata.filtered(&MetadataPolicy::PreserveExact))
                 .try_with_policy(policy)
                 .unwrap();
             for refused in [
                 policy.with_strict(true),
-                policy.with_embed_exif(false),
-                policy.with_embed_xmp(false),
-                policy.with_embed_icc(false),
+                policy.with_strict(false),
+                EncodePolicy::none().with_strict(true),
             ] {
                 assert_eq!(
                     job.try_set_policy(refused),
@@ -235,7 +236,7 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
             let registry = CodecSet::new().with_send_encoder(config);
             let mut job = registry.encode_job(ImageFormat::Jpeg).unwrap();
             job.try_set_policy(policy).unwrap();
-            job.set_metadata_policy(metadata, MetadataPolicy::PreserveExact);
+            job.set_unfiltered_metadata(metadata.filtered(&MetadataPolicy::PreserveExact));
             let mut rows = job.into_encoder().unwrap();
             rows.begin(2, 9, desc.clone()).unwrap();
             for y in 0..9 {
@@ -256,7 +257,6 @@ fn checked_verbatim_color_keeps_profile_across_erasure_and_rows() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn profile_descriptor_admission_checks_each_interpretation_guard() {
     let known = descriptor(PixelFormat::RGB8_SRGB, ADOBE_RGB);
     let unknown = known
@@ -312,9 +312,10 @@ fn profile_descriptor_admission_checks_each_interpretation_guard() {
     ] {
         let mut encoder = JpegEncoderConfig::new()
             .job()
-            .with_metadata_policy(
-                Metadata::none().with_icc(profile),
-                MetadataPolicy::PreserveExact,
+            .with_unfiltered_metadata(
+                Metadata::none()
+                    .with_icc(profile)
+                    .filtered(&MetadataPolicy::PreserveExact),
             )
             .encoder()
             .unwrap();
@@ -326,24 +327,24 @@ fn profile_descriptor_admission_checks_each_interpretation_guard() {
     }
     let mut encoder = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(Metadata::none(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(Metadata::none().filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap();
     assert!(encoder.begin(4, 4, known).is_err());
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
     let desc = descriptor(PixelFormat::RGB8_SRGB, ADOBE_RGB);
     let job = || {
-        JpegEncoderConfig::new().job().with_metadata_policy(
-            Metadata::none().with_icc(ADOBE_RGB),
-            MetadataPolicy::PreserveExact,
+        JpegEncoderConfig::new().job().with_unfiltered_metadata(
+            Metadata::none()
+                .with_icc(ADOBE_RGB)
+                .filtered(&MetadataPolicy::PreserveExact),
         )
     };
     let mut encoder = job()
-        .with_policy(
+        .try_with_policy(
             EncodePolicy::none().with_color(zencodec::ColorEmitPolicy::Custom(
                 zencodec::ColorEmitFields::new(
                     zencodec::IccRetention::Drop,
@@ -351,6 +352,7 @@ fn profile_bytes_refuse_color_carrier_removal_and_cicp_override() {
                 ),
             )),
         )
+        .unwrap()
         .encoder()
         .unwrap();
     assert!(encoder.begin(4, 4, desc.clone()).is_err());

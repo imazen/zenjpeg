@@ -25,6 +25,9 @@ fuzz_target!(|data: &[u8]| {
     } else {
         data
     };
+    let mut strict = JpegDecoderConfig::new();
+    let inner = strict.inner().clone().strict();
+    *strict.inner_mut() = inner;
     let mut permissive = JpegDecoderConfig::new();
     let inner = permissive.inner().clone().permissive();
     *permissive.inner_mut() = inner;
@@ -41,9 +44,11 @@ fuzz_target!(|data: &[u8]| {
                 target_headroom: None,
             },
         ),
+        strict.job(),
         JpegDecoderConfig::new()
             .job()
-            .with_policy(zencodec::decode::DecodePolicy::strict()),
+            .try_with_policy(zencodec::decode::DecodePolicy::none().with_allow_truncated(false))
+            .expect("allow_truncated(false) is accepted"),
         permissive.job(),
     ];
     let mut layout: Option<Vec<core::ops::Range<u64>>> = None;

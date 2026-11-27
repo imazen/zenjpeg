@@ -38,11 +38,10 @@ impl DecodeRowSink for BoundedSink {
 
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         spec: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
+        let (y, width, height) = (strip.y, strip.width, strip.height);
         assert!(height <= self.cap);
         assert_eq!(self.next, y);
         self.next += height;

@@ -608,6 +608,9 @@ fn run_container_xmp(data: &[u8]) {
 #[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn run_inventory(data: &[u8]) {
     use zencodec::decode::{DecodeJob as _, DecoderConfig as _};
+    let mut strict = zenjpeg::JpegDecoderConfig::new();
+    let inner = strict.inner().clone().strict();
+    *strict.inner_mut() = inner;
     let mut permissive = zenjpeg::JpegDecoderConfig::new();
     let inner = permissive.inner().clone().permissive();
     *permissive.inner_mut() = inner;
@@ -624,9 +627,11 @@ fn run_inventory(data: &[u8]) {
             .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
                 target_headroom: None,
             }),
+        strict.job(),
         zenjpeg::JpegDecoderConfig::new()
             .job()
-            .with_policy(zencodec::decode::DecodePolicy::strict()),
+            .try_with_policy(zencodec::decode::DecodePolicy::none().with_allow_truncated(false))
+            .unwrap(),
         permissive.job(),
     ];
     let mut layout: Option<Vec<core::ops::Range<u64>>> = None;

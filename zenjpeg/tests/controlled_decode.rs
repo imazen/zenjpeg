@@ -7,7 +7,7 @@ use zencodec::{
     At, CodecSet, Orientation, OrientationHint,
     decode::*,
     encode::{EncodeJob, EncoderConfig},
-    operation::{Decision, Decline, DecodeRequest, PolicySet, Question},
+    operation::{Decision, Decline, DecodeOptions, PolicySet, Question},
     source::SliceReadAt,
     storage::StorageBudget,
 };
@@ -88,13 +88,11 @@ impl DecodeRowSink for Sink {
     }
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        h: u32,
-        w: u32,
+        strip: RowStrip,
         d: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
         self.effects += 1;
-        self.output.provide_next_buffer(y, h, w, d)
+        self.output.provide_next_buffer(strip, d)
     }
     fn finish(&mut self) -> Result<(), SinkError> {
         self.effects += 1;
@@ -145,8 +143,8 @@ fn generic_erased_and_registered_paths_match_native_pixels() {
                                 budget.clone(),
                             )
                             .unwrap(),
-                        _ => DecodeRequest::new()
-                            .preferring_output(vec![descriptor.clone()])
+                        _ => DecodeOptions::new()
+                            .prefer_pixel_formats(vec![descriptor.clone()])
                             .start_controlled(&set, budget.clone())
                             .unwrap(),
                     };
@@ -239,7 +237,6 @@ fn unavailable_profiles_and_policy_refusal_have_no_sink_effects() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn late_orientation_is_bound_before_adoption_and_matches_direct_decode() {
     let mut exif = zencodec::exif::Exif::new(zencodec::exif::TextEncoding::Ascii);
     exif.set_orientation(Orientation::Rotate90);
@@ -249,7 +246,7 @@ fn late_orientation_is_bound_before_adoption_and_matches_direct_decode() {
         .collect::<Vec<_>>();
     let encoded = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(metadata, zencodec::MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata.filtered(&zencodec::MetadataPolicy::PreserveExact))
         .encode(
             PixelView::new(
                 &raw,
@@ -383,7 +380,9 @@ fn implicit_conversion_and_crop_are_refused_before_input() {
         .correct_color(Some(zenjpeg::decoder::TargetColorSpace::Srgb));
     for job in [
         corrected.job(),
-        JpegDecoderConfig::new().job().with_crop_hint(0, 0, 3, 3),
+        JpegDecoderConfig::new()
+            .job()
+            .with_crop_hint(zencodec::Rect::new(0, 0, 3, 3)),
     ] {
         let storage = budget();
         let error = match job.dyn_controlled_decoder(&[], storage.clone()) {
@@ -898,7 +897,7 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
         let bytes = base(progressive);
         let config = JpegDecoderConfig::new();
         assert!(
-            <JpegDecoderConfig as DecoderConfig>::supported_descriptors()
+            <JpegDecoderConfig as DecoderConfig>::supported_pixel_formats()
                 .contains(&PixelFormat::RGBAF32_LINEAR)
         );
         let rgb = config
@@ -937,8 +936,8 @@ fn advertised_rgba_float_decode_preserves_rgb_bits_and_supplies_opaque_alpha() {
             }
         }
         let codecs = CodecSet::new().with_decoder(config);
-        let checked = DecodeRequest::new()
-            .with_output(PixelFormat::RGBAF32_LINEAR)
+        let checked = DecodeOptions::new()
+            .require_pixel_format(PixelFormat::RGBAF32_LINEAR)
             .decode(&codecs, &bytes)
             .unwrap();
         assert_eq!(checked.pixels().format(), &PixelFormat::RGBAF32_LINEAR);
@@ -963,8 +962,8 @@ fn ranked_native_output_does_not_promote_a_later_float_preference() {
                 .unwrap()
                 .decode()
                 .unwrap();
-            let actual = DecodeRequest::new()
-                .preferring_output(preferred.to_vec())
+            let actual = DecodeOptions::new()
+                .prefer_pixel_formats(preferred.to_vec())
                 .decode(&CodecSet::new().with_decoder(config), &bytes)
                 .unwrap();
             assert_eq!(

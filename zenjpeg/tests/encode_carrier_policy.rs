@@ -23,16 +23,14 @@ use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
 const W: u32 = 16;
 const H: u32 = 8;
 
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn job(meta: &Metadata) -> JpegEncodeJob {
     JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
 }
 
-#[allow(deprecated)] // The legacy setter is a public way to forbid ICC output.
-fn legacy(job: JpegEncodeJob, policy: EncodePolicy) -> JpegEncodeJob {
-    job.with_policy(policy)
+fn with_checked_policy(job: JpegEncodeJob, policy: EncodePolicy) -> JpegEncodeJob {
+    job.try_with_policy(policy).unwrap()
 }
 
 fn encode(
@@ -43,7 +41,6 @@ fn encode(
     encode_as(rows, meta, policy, PixelFormat::RGB8_SRGB, None)
 }
 
-/// `policy` goes through the legacy setter.
 fn encode_as(
     rows: bool,
     meta: &Metadata,
@@ -53,7 +50,7 @@ fn encode_as(
 ) -> Result<Vec<u8>, At<CodecError>> {
     let mut job = job(meta);
     if let Some(policy) = policy {
-        job = legacy(job, policy);
+        job = with_checked_policy(job, policy);
     }
     run(job, rows, descriptor, context)
 }
@@ -200,16 +197,15 @@ fn forbidding_the_profile_of_wide_gamut_pixels_is_a_policy_refusal() {
 }
 
 #[test]
-fn the_legacy_setter_drops_a_job_profile_it_cannot_identify() {
+fn forbidding_an_unidentified_job_profile_is_a_policy_refusal() {
     for (what, bytes) in not_identified() {
         let meta = Metadata::none().with_icc(bytes);
         for policy in [forbid(), Some(EncodePolicy::strip_all())] {
             for rows in [false, true] {
-                // Best effort, as before: no identified colour goes with it.
-                let file = encode(rows, &meta, policy)
-                    .unwrap_or_else(|error| panic!("{what}, rows {rows}: {error}"));
-                let absent = encode(rows, &Metadata::none(), None).unwrap();
-                assert_eq!(file, absent, "{what}, rows {rows}");
+                assert_policy_refusal(
+                    encode(rows, &meta, policy),
+                    &format!("{what}, policy {policy:?}, rows {rows}"),
+                );
             }
         }
     }
@@ -221,7 +217,7 @@ fn the_legacy_setter_drops_a_job_profile_it_cannot_identify() {
 }
 
 #[test]
-fn the_legacy_setter_keeps_a_colour_it_can_identify() {
+fn forbidding_the_profile_with_identified_color_is_a_policy_refusal() {
     let display_p3 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     for (what, bytes) in not_identified() {
         for rows in [false, true] {
@@ -280,50 +276,52 @@ fn forbidding_a_colour_context_profile_refuses() {
             &format!("unidentified context profile, rows {rows}"),
         );
     }
-    let job = legacy(job(&Metadata::none()), forbid().unwrap());
+    let job = with_checked_policy(job(&Metadata::none()), forbid().unwrap());
     let declaration = EncodeDeclaration::new(W, H, rgb8).with_color((*context).clone());
     assert!(job.plan_encode(&declaration).is_err());
 }
 
 #[test]
-fn setter_order_decides_whether_the_legacy_behaviour_applies() {
+fn checked_policy_setter_order_and_atomicity() {
     let meta = Metadata::none().with_icc(unidentified());
     let rgb8 = PixelFormat::RGB8_SRGB;
     let strip = EncodePolicy::strip_all();
     let verbatim = EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim);
     let refused = EncodePolicy::none().with_strict(true);
     for rows in [false, true] {
-        let absent = encode(rows, &Metadata::none(), None).unwrap();
-        // A checked `none()` specifies nothing: the legacy policy stays.
-        let mut checked = legacy(job(&meta), strip);
+        // A checked `none()` specifies nothing: the previous policy stays.
+        let mut checked = with_checked_policy(job(&meta), strip);
         checked.try_set_policy(EncodePolicy::none()).unwrap();
-        let file = run(checked, rows, rgb8.clone(), None).unwrap();
-        assert_eq!(file, absent, "legacy, then checked none(), rows {rows}");
+        assert_policy_refusal(
+            run(checked, rows, rgb8.clone(), None),
+            &format!("strip, then checked none(), rows {rows}"),
+        );
         // A refused checked policy leaves the job unchanged.
-        let mut checked = legacy(job(&meta), strip);
+        let mut checked = with_checked_policy(job(&meta), strip);
         assert_eq!(
             checked.try_set_policy(refused),
             Err(UnsupportedOperation::EncodePolicy)
         );
-        let file = run(checked, rows, rgb8.clone(), None).unwrap();
-        assert_eq!(
-            file, absent,
-            "legacy, then a refused checked policy, rows {rows}"
+        assert_policy_refusal(
+            run(checked, rows, rgb8.clone(), None),
+            &format!("strip, then a refused checked policy, rows {rows}"),
         );
         // An admitted checked policy replaces it: Verbatim writes the profile.
-        let mut checked = legacy(job(&meta), strip);
+        let mut checked = with_checked_policy(job(&meta), strip);
         checked.try_set_policy(verbatim).unwrap();
         let file = run(checked, rows, rgb8.clone(), None).unwrap();
         assert_eq!(
             icc(&file),
             Some(unidentified()),
-            "legacy, then checked Verbatim, rows {rows}"
+            "strip, then checked Verbatim, rows {rows}"
         );
-        // The legacy setter after a checked policy replaces it in turn.
-        let mut checked = job(&meta);
-        checked.try_set_policy(verbatim).unwrap();
-        let file = run(legacy(checked, strip), rows, rgb8.clone(), None).unwrap();
-        assert_eq!(file, absent, "checked Verbatim, then legacy, rows {rows}");
+        // Replacing Verbatim with strip_all refuses dropping the profile.
+        let mut checked = with_checked_policy(job(&meta), verbatim);
+        checked.try_set_policy(strip).unwrap();
+        assert_policy_refusal(
+            run(checked, rows, rgb8.clone(), None),
+            &format!("checked Verbatim, then strip, rows {rows}"),
+        );
     }
 }
 

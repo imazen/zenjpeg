@@ -17,7 +17,7 @@
 //! orient swaps axes (Rotate90/270/Transpose/Transverse), the ResizeConfig
 //! `out_width` / `out_height` are the transposed pre-orient dimensions.
 
-use zenresize::{FitMode, OrientOutput, Orientation, PixelDescriptor, ResizeConfig, SourceRegion};
+use zenresize::{FitMode, OrientOutput, Orientation, PixelFormat, ResizeConfig, SourceRegion};
 
 use super::LayoutConfig;
 use super::command::{Command, active_fit, compose_orientation, explicit_crop, needs_lossy};
@@ -59,7 +59,7 @@ impl Plan {
         sec_w: u32,
         sec_h: u32,
         layout_cfg: &LayoutConfig,
-        format: PixelDescriptor,
+        format: PixelFormat,
     ) -> Plan {
         let scale_down = |v: u32, to: u32, from: u32| {
             (u64::from(v) * u64::from(to) / u64::from(from.max(1))) as u32
@@ -192,7 +192,7 @@ pub(crate) fn plan_layout(
     // the resizer applies source_region internally.
     let mut builder = ResizeConfig::builder(src_w, src_h, resize_out_w, resize_out_h)
         .filter(layout_cfg.filter)
-        .format(PixelDescriptor::RGB8_SRGB)
+        .format(PixelFormat::RGB8_SRGB)
         .linear();
     let source_rect = source_region
         .as_ref()
@@ -304,7 +304,7 @@ mod tests {
             sec.0,
             sec.1,
             &cfg,
-            PixelDescriptor::GRAY8_SRGB,
+            PixelFormat::GRAY8_SRGB,
         )
     }
 

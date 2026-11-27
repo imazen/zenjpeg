@@ -96,11 +96,10 @@ impl DecodeRowSink for Sink {
 
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
+        let (y, width, height) = (strip.y, strip.width, strip.height);
         // The stride must be a whole number of pixels for the view.
         let pixel = descriptor.layout.order.channels();
         let stride = self.stride.div_ceil(pixel) * pixel;
@@ -213,7 +212,7 @@ fn output_info_and_advertised_exits_name_the_depth() {
         job.output_info(&data).unwrap().native_format,
         PixelFormat::RGB16_SRGB
     );
-    let advertised = JpegDecoderConfig::supported_descriptors();
+    let advertised = JpegDecoderConfig::supported_pixel_formats();
     for descriptor in [
         PixelFormat::RGB16_SRGB,
         PixelFormat::RGBA16_SRGB,
@@ -266,7 +265,7 @@ fn crop_hint_takes_the_same_samples_on_every_path() {
     let (_, cropped) = check_job_paths(&data, &[], || {
         JpegDecoderConfig::new()
             .job()
-            .with_crop_hint(x as u32, y as u32, w as u32, h as u32)
+            .with_crop_hint(zencodec::Rect::new(x as u32, y as u32, w as u32, h as u32))
     });
     let stride = 227 * 3;
     let expected: Vec<u16> = (y..y + h)
@@ -322,7 +321,7 @@ fn a_list_offering_more_than_u8_does_not_narrow() {
     let data = corpus_12_bit();
     for preferred in [
         vec![PixelFormat::RGB8_SRGB, PixelFormat::RGB16_SRGB],
-        JpegDecoderConfig::supported_descriptors().to_vec(),
+        JpegDecoderConfig::supported_pixel_formats().to_vec(),
     ] {
         let (descriptor, samples) = check_paths(&data, &preferred);
         assert_eq!(descriptor, PixelFormat::RGB16_SRGB);

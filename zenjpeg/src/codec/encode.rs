@@ -379,7 +379,7 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         ImageFormat::Jpeg
     }
 
-    fn supported_descriptors() -> &'static [PixelFormat] {
+    fn supported_pixel_formats() -> &'static [PixelFormat] {
         ENCODE_DESCRIPTORS
     }
 
@@ -510,9 +510,9 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
         // as VmHWM marginal, i.e. above the held input). The zencodec convention
         // (`ResourceEstimate::conservative`) is total peak = input buffer (held by the
         // caller throughout the encode) + working, so add the caller's input buffer.
-        let input = image.input_bytes();
+        let input = image.uncompressed_frame_bytes();
         ResourceEstimate::new(e.peak_memory_bytes.saturating_add(input), e.time_ms as u64)
-            .with_peak_max(e.peak_memory_bytes_max.saturating_add(input))
+            .with_peak_memory_bytes_max(e.peak_memory_bytes_max.saturating_add(input))
             .with_threading(crate::heuristics::encode_threading_info())
             .at_cores(compute.cores())
     }
@@ -525,7 +525,6 @@ impl zencodec::encode::EncoderConfig for JpegEncoderConfig {
             metadata_requirement: None,
             limits: ResourceLimits::none(),
             policy: None,
-            legacy_policy: false,
             image_size: None,
         }
     }
@@ -547,9 +546,6 @@ pub struct JpegEncodeJob {
     metadata_requirement: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
-    /// `policy` came from the deprecated best-effort `with_policy`
-    /// (`build_request_from` keeps its earlier carrier behaviour).
-    legacy_policy: bool,
     /// Image dimensions, set via `with_canvas_size`. When known, enables true
     /// streaming in `push_rows` → `finish` (no full-image accumulation).
     image_size: Option<(u32, u32)>,
@@ -565,7 +561,7 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
-    fn with_metadata(mut self, meta: Metadata) -> Self {
+    fn with_unfiltered_metadata(mut self, meta: Metadata) -> Self {
         self.metadata = Some(meta);
         self
     }
@@ -650,27 +646,24 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::encode::EncodePolicy) -> Self {
-        self.policy = Some(policy);
-        self.legacy_policy = true;
-        self
-    }
-
     fn try_set_policy(
         &mut self,
         policy: zencodec::encode::EncodePolicy,
     ) -> Result<(), zencodec::UnsupportedOperation> {
-        use zencodec::{ColorEmitPolicy, encode::EncodePolicy};
+        use zencodec::encode::EncodePolicy;
         if policy == EncodePolicy::none() {
             return Ok(());
         }
-        // Qualify supplied color carriers; other emission requirements must
-        // not silently fall through to the legacy best-effort setter.
-        if policy != EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim) {
+        let mut admitted = EncodePolicy::none();
+        admitted.color = policy.color;
+        admitted.embed_icc = policy.embed_icc;
+        admitted.embed_exif = policy.embed_exif;
+        admitted.embed_xmp = policy.embed_xmp;
+        // Any other field (`strict` or a field a later zencodec adds) differs.
+        if admitted != policy {
             return Err(zencodec::UnsupportedOperation::EncodePolicy);
         }
         self.policy = Some(policy);
-        self.legacy_policy = false;
         Ok(())
     }
 
@@ -738,7 +731,6 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
             metadata_requirement: self.metadata_requirement,
             limits: self.limits,
             policy: self.policy,
-            legacy_policy: self.legacy_policy,
             accumulator: None,
             streaming_enc: None,
             image_size: self.image_size,
@@ -760,8 +752,8 @@ impl zencodec::encode::EncodeJob for JpegEncodeJob {
 
 /// Single-image JPEG encoder implementing [`zencodec::encode::Encoder`].
 ///
-/// Supports one-shot `encode()`, streaming `push_rows()` + `finish()`,
-/// and the `encode_srgba8()` convenience method.
+/// Supports one-shot `encode()`, in-place `encode_in_place()`, and streaming
+/// `push_rows()` + `finish()`.
 pub struct JpegEncoder {
     effective_config: EncoderConfig,
     /// Cancellation and progress control. The native encoder polls it as a
@@ -772,8 +764,6 @@ pub struct JpegEncoder {
     metadata_requirement: Option<Metadata>,
     limits: ResourceLimits,
     policy: Option<zencodec::encode::EncodePolicy>,
-    /// `policy` came from the deprecated best-effort `with_policy`.
-    legacy_policy: bool,
     /// Accumulated rows for push_rows path (fallback when dimensions unknown).
     accumulator: Option<RowAccumulator>,
     /// Native row encoder — used when dimensions are known, from `begin`
@@ -996,12 +986,8 @@ impl StoredColor {
 #[derive(Clone, Debug, PartialEq)]
 enum ColorBinding {
     /// The job metadata, which an explicit colour context agrees with, or
-    /// which profile-tagged bytes need.
+    /// which profile-tagged or default-labelled bytes use.
     Metadata,
-    /// The job metadata, labelling pixels without a colour context. Holds the
-    /// stored samples' own interpretation, which the deprecated best-effort
-    /// setter must not lose with a profile it drops.
-    JobMetadata(StoredColor),
     /// The stored samples' own interpretation.
     Stored(StoredColor),
 }
@@ -1112,7 +1098,7 @@ impl JpegEncoder {
         let (width, height, descriptor) = (
             declaration.width,
             declaration.height,
-            &declaration.descriptor,
+            &declaration.pixel_format,
         );
         self.stop_ref().check()?;
         if self.image_size.is_some_and(|s| s != (width, height)) {
@@ -1409,7 +1395,7 @@ impl JpegEncoder {
                         .into(),
                 ));
             }
-            return Ok(ColorBinding::JobMetadata(stored));
+            return Ok(ColorBinding::Metadata);
         }
         if same_meaning(metadata, stored.parts(), gray) {
             Ok(ColorBinding::Metadata)
@@ -1445,7 +1431,7 @@ impl JpegEncoder {
         let policy = self.policy.unwrap_or_default();
         let gray = layout.is_grayscale();
         let (icc, cicp) = match binding {
-            ColorBinding::Metadata | ColorBinding::JobMetadata(_) => self
+            ColorBinding::Metadata => self
                 .metadata
                 .as_ref()
                 .map_or((None, None), |m| (m.icc_profile.as_ref(), m.cicp)),
@@ -1619,20 +1605,8 @@ impl JpegEncoder {
         // JPEG's only colour carrier is the ICC profile. A plan or policy that
         // writes none for a description other than the sRGB default would
         // relabel the image: an identified non-sRGB description, and also an
-        // unidentified profile, which nothing shows to mean sRGB. The
-        // deprecated best-effort setter keeps its earlier behaviour for job
-        // metadata on pixels without a colour context: a profile zenpixels
-        // cannot identify is dropped, unless the job's code points or the
-        // pixels' own interpretation go with it. A colour context and a
-        // checked policy never drop a profile that way.
-        let described = match binding {
-            ColorBinding::JobMetadata(stored)
-                if self.legacy_policy && icc.is_some_and(|icc| identify_icc(icc).is_none()) =>
-            {
-                cicp.map_or(stored.parts(), |cicp| (None, Some(cicp)))
-            }
-            _ => (icc.map(|i| &i[..]), cicp),
-        };
+        // unidentified profile, which nothing shows to mean sRGB.
+        let described = (icc.map(|i| &i[..]), cicp);
         if !wrote_icc && !is_default_meaning(described, gray) {
             if !policy.resolve_icc(true) {
                 return Err(Error::encode_policy_rejected(
@@ -1870,7 +1844,7 @@ impl JpegEncoder {
         let (width, height, descriptor) = (
             declaration.width,
             declaration.height,
-            &declaration.descriptor,
+            &declaration.pixel_format,
         );
         if self.begun {
             return Err(Error::invalid_state("begin called twice").into());
@@ -1956,33 +1930,6 @@ impl zencodec::encode::Encoder for JpegEncoder {
             &binding,
         )
         .map_err(Into::into)
-    }
-
-    fn encode_srgba8(
-        self,
-        data: &mut [u8],
-        make_opaque: bool,
-        width: u32,
-        height: u32,
-        stride_pixels: u32,
-    ) -> Result<EncodeOutput, Self::Error> {
-        self.check_one_shot()?;
-        if make_opaque {
-            for chunk in data.as_chunks_mut::<4>().0 {
-                chunk[3] = 255;
-            }
-        }
-        let layout = PixelLayout::Rgba8Srgb;
-        self.check_limits(width, height, layout)?;
-        let binding = self.bind_color(&PixelFormat::RGBA8_SRGB, layout)?;
-        let req = self.build_request(layout, &binding)?;
-        let stop = self.stop_ref();
-        let stride_bytes = stride_pixels as usize * 4;
-        let mut enc = req.encode_from_bytes(width, height, layout)?;
-        enc.push(data, height as usize, stride_bytes, stop)?;
-        let output = enc.finish()?;
-        self.check_output_size(&output)?;
-        Ok(EncodeOutput::new(output, ImageFormat::Jpeg))
     }
 
     /// Declare the image and start the row encoder with the configuration
@@ -2444,7 +2391,7 @@ mod tests {
         for unavailable in [
             SynthesizedIcc::NotNeeded,
             SynthesizedIcc::IccDbDisabled,
-            SynthesizedIcc::CmsUnsupported,
+            SynthesizedIcc::Unsupported,
         ] {
             assert!(
                 working_icc(unavailable)

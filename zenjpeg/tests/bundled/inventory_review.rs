@@ -412,14 +412,18 @@ fn scan_disposition(i: &Inventory) -> D {
 /// Finding 7: the job's policy, inner strictness and dimension limits
 /// decide whether the decode fails, and the inventory follows them.
 #[test]
-#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn job_policy_strictness_and_limits_are_followed() {
     use zencodec::decode::DecodePolicy;
     let orig = load(TESTORIG);
 
     // One stray byte between APP0 and DQT: a warning, an error when Strict.
     let d = insert(&orig, 20, &[0x00]);
-    let strict = || job().with_policy(DecodePolicy::strict());
+    let strict = || {
+        let mut cfg = JpegDecoderConfig::new();
+        let s = cfg.inner().clone().strict();
+        *cfg.inner_mut() = s;
+        cfg.job()
+    };
     assert!(decode(job(), &d).is_ok());
     assert!(decode(strict(), &d).is_err());
     assert_eq!(scan_disposition(&inv(&job(), &d)), D::ImageData);
@@ -427,9 +431,9 @@ fn job_policy_strictness_and_limits_are_followed() {
     // `allow_truncated: false` alone also makes the decode Strict.
     let mut no_trunc = DecodePolicy::none();
     no_trunc.allow_truncated = Some(false);
-    assert!(decode(job().with_policy(no_trunc), &d).is_err());
+    assert!(decode(job().try_with_policy(no_trunc).unwrap(), &d).is_err());
     assert_eq!(
-        scan_disposition(&inv(&job().with_policy(no_trunc), &d)),
+        scan_disposition(&inv(&job().try_with_policy(no_trunc).unwrap(), &d)),
         D::Skipped
     );
 
@@ -457,8 +461,8 @@ fn job_policy_strictness_and_limits_are_followed() {
     let p = load(PROG);
     let mut pol = DecodePolicy::none();
     pol.allow_progressive = Some(false);
-    assert!(decode(job().with_policy(pol), &p).is_err());
-    let i = inv(&job().with_policy(pol), &p);
+    assert!(decode(job().try_with_policy(pol).unwrap(), &p).is_err());
+    let i = inv(&job().try_with_policy(pol).unwrap(), &p);
     assert_eq!(scan_disposition(&i), D::Skipped);
     assert!(
         i.parts()[0].disposition().is_consumed(),
@@ -785,7 +789,6 @@ fn sef_trailer_does_not_swallow_the_gain_map() {
 /// JPEG): entry 1 is the gain map, nested in the APP15; entry 2 is not.
 #[cfg(feature = "ultrahdr")]
 #[test]
-#[allow(deprecated)] // Exercises the legacy decode policy setter.
 fn the_first_extracted_undefined_entry_is_the_gain_map() {
     let orig = load(UHDR);
     let eoi = primary_eoi_end(&orig);
@@ -879,9 +882,7 @@ fn the_first_extracted_undefined_entry_is_the_gain_map() {
     );
     // Strict validation must fail rather than promote the unrelated trailing
     // JPEG. The default assertions above intentionally retain the legacy case.
-    let mut policy = zencodec::decode::DecodePolicy::none();
-    policy.strict = Some(true);
-    let strict = || render_job(c).with_policy(policy.clone());
+    let strict = || level_job("strict").with_gain_map_render(c);
     assert!(
         decode(strict(), &d)
             .unwrap_err()
@@ -1211,9 +1212,7 @@ fn junk_before_an_rst_marker_is_unreferenced() {
 
 const LEVELS: [&str; 4] = ["balanced", "strict", "lenient", "permissive"];
 
-/// A job at a decoder strictness level (Strict through the decode policy,
-/// the others through the inner config).
-#[allow(deprecated)] // Exercises the legacy decode policy setter.
+/// A job at a decoder strictness level via the inner config.
 fn level_job(level: &str) -> JpegDecodeJob {
     let inner = |f: fn(zenjpeg::decode::DecodeConfig) -> zenjpeg::decode::DecodeConfig| {
         let mut cfg = JpegDecoderConfig::new();
@@ -1222,11 +1221,7 @@ fn level_job(level: &str) -> JpegDecodeJob {
         cfg.job()
     };
     match level {
-        "strict" => {
-            let mut p = zencodec::decode::DecodePolicy::none();
-            p.strict = Some(true);
-            job().with_policy(p)
-        }
+        "strict" => inner(|c| c.strict()),
         "lenient" => inner(|c| c.lenient()),
         "permissive" => inner(|c| c.permissive()),
         _ => job(),

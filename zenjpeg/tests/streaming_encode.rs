@@ -56,12 +56,11 @@ fn meta() -> Metadata {
     Metadata::none().with_exif(&exif[..]).with_xmp(&xmp[..])
 }
 
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn one_shot(cfg: &E, px: &[u8], w: u32, h: u32, ch: usize, m: &Metadata) -> Vec<u8> {
     let s = PixelView::new(px, w, h, w as usize * ch, desc_ref(ch)).unwrap();
     cfg.clone()
         .job()
-        .with_metadata_policy(m.clone(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(m.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap()
         .encode(s)
@@ -72,7 +71,6 @@ fn one_shot(cfg: &E, px: &[u8], w: u32, h: u32, ch: usize, m: &Metadata) -> Vec<
 /// `begin`, push in strips of `strip` rows, drain after each. Returns the
 /// timing, the file, and the bytes pending after `begin` and after each
 /// pushed row count.
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn streamed(
     cfg: &E,
     px: &[u8],
@@ -84,7 +82,7 @@ fn streamed(
     let mut enc = cfg
         .clone()
         .job()
-        .with_metadata_policy(m.clone(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(m.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap();
     let timing = enc.begin(w, h, desc(ch)).unwrap();
@@ -153,12 +151,11 @@ fn fixed_tables_stream_byte_identical_to_one_shot() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn metadata_is_in_the_header_pending_at_begin() {
     let cfg = fixed(ChromaSubsampling::Quarter);
     let mut enc = cfg
         .job()
-        .with_metadata_policy(meta(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta().filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .unwrap();
     assert!(enc.begin(64, 48, desc(3)).unwrap().streams());

@@ -423,9 +423,9 @@ impl<'a> LayoutRequest<'a> {
     ) -> Result<Vec<u8>> {
         let gm_info = DecodeConfig::new().read_info(gm_bytes)?;
         let format = if gm_info.num_components == 1 {
-            zenresize::PixelDescriptor::GRAY8_SRGB
+            zenresize::PixelFormat::GRAY8_SRGB
         } else {
-            zenresize::PixelDescriptor::RGB8_SRGB
+            zenresize::PixelFormat::RGB8_SRGB
         };
         let gm_plan = plan.for_secondary(
             primary_src_w,

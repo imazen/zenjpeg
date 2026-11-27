@@ -724,11 +724,10 @@ impl ReuseSink {
 impl DecodeRowSink for ReuseSink {
     fn provide_next_buffer(
         &mut self,
-        _y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: PixelFormat,
     ) -> Result<PixelViewMut<'_>, SinkError> {
+        let (width, height) = (strip.width, strip.height);
         let bpp = descriptor.layout.bytes_per_pixel();
         let stride = width as usize * bpp;
         let needed = height as usize * stride;

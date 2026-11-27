@@ -150,7 +150,9 @@ pub fn generate_xmp_with_items(
 /// `Container:Directory` (depth maps, confidence maps, vendor items),
 /// use [`parse_xmp_full`] instead.
 pub fn parse_xmp(xmp: &str) -> Result<(zencodec::GainMapParams, Option<usize>), XmpError> {
-    zenmeta::xmp::gainmap::parse_xmp(xmp).map_err(map_xmp_error)
+    zenmeta::xmp::gainmap::parse_xmp(xmp)
+        .map(|parsed| (parsed.params, parsed.gain_map_byte_len))
+        .map_err(map_xmp_error)
 }
 
 fn map_xmp_error(error: zenmeta::xmp::gainmap::XmpError) -> XmpError {

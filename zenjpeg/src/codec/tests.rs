@@ -72,7 +72,6 @@ mod api_tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Exercises the legacy metadata setter.
     fn encoding_with_metadata() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
@@ -82,7 +81,7 @@ mod api_tests {
         let meta = Metadata::default().with_icc(icc);
         let output = enc
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(view(img.as_ref()))
@@ -93,26 +92,48 @@ mod api_tests {
     }
 
     #[test]
-    #[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
     fn encoding_with_policy_strips_metadata() {
         let enc = JpegEncoderConfig::new().with_calibrated_quality(85.0);
         let pixels: Vec<Rgb<u8>> = vec![Rgb { r: 255, g: 0, b: 0 }; 16];
         let img = Img::new(pixels.as_slice(), 4, 4);
 
-        let icc = b"fake icc profile data";
-        let meta = Metadata::default().with_icc(icc.as_slice());
+        // XMP/EXIF are stripped cleanly under strip_all.
+        let xmp = b"<x:xmpmeta/>";
+        let meta = Metadata::default().with_xmp(xmp.as_slice());
         let policy = zencodec::encode::EncodePolicy::strip_all();
 
         let output = enc
+            .clone()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
-            .with_policy(policy)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
+            .try_with_policy(policy)
+            .unwrap()
             .encoder()
             .unwrap()
             .encode(view(img.as_ref()))
             .unwrap();
-        // Should succeed but ICC may be stripped by strict policy
         assert!(!output.data().is_empty());
+        assert!(
+            !output.data().windows(xmp.len()).any(|w| w == xmp),
+            "strip_all must omit XMP"
+        );
+
+        // Unidentified ICC cannot be silently dropped under checked policy.
+        let icc = b"fake icc profile data";
+        let meta = Metadata::default().with_icc(icc.as_slice());
+        let err = enc
+            .job()
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
+            .try_with_policy(policy)
+            .unwrap()
+            .encoder()
+            .unwrap()
+            .encode(view(img.as_ref()))
+            .unwrap_err();
+        assert_eq!(
+            err.error().category(),
+            zencodec::ErrorCategory::Policy(zencodec::PolicyKind::Encode)
+        );
     }
 
     #[test]
@@ -275,7 +296,7 @@ mod api_tests {
         let reencoded = enc
             .clone()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(view(img.as_ref()))
@@ -298,7 +319,7 @@ mod api_tests {
         let reencoded = enc
             .clone()
             .job()
-            .with_metadata_policy(meta, zencodec::MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&zencodec::MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(view(img.as_ref()))
@@ -958,7 +979,7 @@ mod api_tests {
 
         // Use the full supported descriptor list (includes f32 types)
         let dec = JpegDecoderConfig::new();
-        let preferred = JpegDecoderConfig::supported_descriptors();
+        let preferred = JpegDecoderConfig::supported_pixel_formats();
 
         // This must not panic — previously hit bytemuck AlignmentMismatch
         let output = dec
@@ -1452,11 +1473,10 @@ mod push_decode_stride_tests {
         }
         fn provide_next_buffer(
             &mut self,
-            y: u32,
-            height: u32,
-            width: u32,
+            strip: zencodec::decode::RowStrip,
             descriptor: ZenPixelFormat,
         ) -> Result<zenpixels::PixelViewMut<'_>, SinkError> {
+            let (y, width, height) = (strip.y, strip.width, strip.height);
             let row_start = y as usize * self.stride;
             let row_bytes = width as usize * 4;
             let needed = if height > 0 {

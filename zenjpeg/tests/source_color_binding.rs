@@ -17,7 +17,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use zencodec::encode::{EncodeJob as _, EncodePolicy, Encoder as _, EncoderConfig as _};
-use zencodec::operation::EncodeRequest;
+use zencodec::operation::EncodeOptions;
 use zencodec::{CodecSet, ColorEmitPolicy, ImageFormat, Metadata, MetadataPolicy};
 use zenjpeg::JpegEncoderConfig;
 use zenpixels::{Cicp, ColorSpace, PixelFormat, PixelView, Primaries, RenderingIntent};
@@ -181,9 +181,9 @@ fn assert_samples(samples: &[u8], tolerance: u8, what: &str) {
 
 fn checked(pixels: PixelView<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u8>, String> {
     let codecs = CodecSet::new().with_encoder(quality());
-    let mut request = EncodeRequest::new(ImageFormat::Jpeg);
+    let mut request = EncodeOptions::new(ImageFormat::Jpeg);
     if let Some(policy) = policy {
-        request = request.with_policy(policy);
+        request = request.require_policy(policy);
     }
     request
         .encode(&codecs, pixels)
@@ -191,11 +191,10 @@ fn checked(pixels: PixelView<'_>, policy: Option<EncodePolicy>) -> Result<Vec<u8
         .map_err(|error| format!("{error:?}"))
 }
 
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn with_metadata(meta: Metadata, pixels: PixelView<'_>) -> Result<Vec<u8>, String> {
     quality()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .and_then(|encoder| encoder.encode(pixels))
         .map(|output| output.into_vec())
@@ -244,7 +243,7 @@ fn sixteen_bit_samples_decode_to_their_stored_values() {
     assert_eq!(icc, None, "sRGB needs no carrier");
     assert_samples(&samples, 4, "RGB16_SRGB");
 
-    let linear16 = JpegEncoderConfig::supported_descriptors()
+    let linear16 = JpegEncoderConfig::supported_pixel_formats()
         .iter()
         .find(|d| {
             d.layout.sample == zenpixels::SampleType::U16
@@ -424,13 +423,13 @@ fn metadata_contradicting_the_current_context_refuses() {
 /// A policy that forbids the only possible carrier cannot be honoured for a
 /// non-sRGB interpretation.
 #[test]
-#[allow(deprecated)] // The legacy setter is still a public way to forbid ICC output.
 fn forbidding_the_icc_carrier_refuses_wide_gamut_pixels() {
     let raster = rgb8();
     let pixels = raster.slice(p3(PixelFormat::RGB8_SRGB));
     let encoder = quality()
         .job()
-        .with_policy(EncodePolicy::none().with_embed_icc(false))
+        .try_with_policy(EncodePolicy::none().with_embed_icc(false))
+        .unwrap()
         .encoder()
         .unwrap();
     assert!(encoder.encode(pixels).is_err());

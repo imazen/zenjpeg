@@ -2195,7 +2195,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=5bc640c6adcd358587ab70b6645fa4e19da31af5#5bc640c6adcd358587ab70b6645fa4e19da31af5"
+source = "git+https://github.com/imazen/ultrahdr?rev=26bea4bcc01849a5113127f3766af73ae35e50f4#26bea4bcc01849a5113127f3766af73ae35e50f4"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -2216,7 +2216,7 @@ dependencies = [
 [[package]]
 name = "ultrahdr-rs"
 version = "0.4.1"
-source = "git+https://github.com/imazen/ultrahdr?rev=5bc640c6adcd358587ab70b6645fa4e19da31af5#5bc640c6adcd358587ab70b6645fa4e19da31af5"
+source = "git+https://github.com/imazen/ultrahdr?rev=26bea4bcc01849a5113127f3766af73ae35e50f4#26bea4bcc01849a5113127f3766af73ae35e50f4"
 dependencies = [
  "bytemuck",
  "enough",
@@ -2848,7 +2848,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "almost-enough",
  "bytemuck",
@@ -2863,7 +2863,7 @@ dependencies = [
 [[package]]
 name = "zencodec-coroutine"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "enough",
  "spin",
@@ -2874,7 +2874,7 @@ dependencies = [
 [[package]]
 name = "zencodec-io"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "enough",
  "how-far",
@@ -2885,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "zencodec-testkit"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "enough",
  "how-far-along",
@@ -2903,15 +2903,6 @@ source = "git+https://github.com/imazen/zenflate?rev=7270e38faca9cdbae793938fa22
 dependencies = [
  "archmage 0.9.33",
  "enough",
-]
-
-[[package]]
-name = "zenhash"
-version = "0.1.0"
-source = "git+https://github.com/imazen/zenhash?rev=98c385a4e54a#98c385a4e54a1d41870610e13a614295c538275c"
-dependencies = [
- "archmage 0.9.33",
- "whereat",
 ]
 
 [[package]]
@@ -2981,7 +2972,7 @@ dependencies = [
  "zenpixels 0.5.0",
  "zenpixels-convert",
  "zenpng",
- "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=b5afc8adac77b1800c26e6747faac670c0cd34dd)",
+ "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=e6c077561dcb426b23d8e7c3da1ca0e12cc13c5f)",
  "zensim",
  "zensim-regress",
  "zentone",
@@ -3013,7 +3004,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=26326a6e1ab59086c7f8683eb27f4c8e054d5e54#26326a6e1ab59086c7f8683eb27f4c8e054d5e54"
+source = "git+https://github.com/imazen/zencodec?rev=5d4f6c473404c09c95f404543f8a16a1e3cb8477#5d4f6c473404c09c95f404543f8a16a1e3cb8477"
 dependencies = [
  "roxmltree",
  "zencodec",
@@ -3022,18 +3013,18 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=7badb1478ec27888a51a2f1a403630a1560aa7a1#7badb1478ec27888a51a2f1a403630a1560aa7a1"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
 dependencies = [
  "bytemuck",
  "whereat",
- "zenhash",
 ]
 
 [[package]]
 name = "zenpixels"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=d40a957e95d19ea3fb5c29472820c86e8a34b09e#d40a957e95d19ea3fb5c29472820c86e8a34b09e"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -3044,7 +3035,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=d40a957e95d19ea3fb5c29472820c86e8a34b09e#d40a957e95d19ea3fb5c29472820c86e8a34b09e"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"
 dependencies = [
  "archmage 0.9.33",
  "bytemuck",
@@ -3066,7 +3057,7 @@ dependencies = [
 [[package]]
 name = "zenpng"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenpng?rev=c55a2ff702d765312d7855bcb6ab477c5f24363d#c55a2ff702d765312d7855bcb6ab477c5f24363d"
+source = "git+https://github.com/imazen/zenpng?rev=af5d24b89d91efb3db91a632047a0e0c835fe007#af5d24b89d91efb3db91a632047a0e0c835fe007"
 dependencies = [
  "almost-enough",
  "archmage 0.9.33",
@@ -3102,23 +3093,6 @@ dependencies = [
 [[package]]
 name = "zenresize"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenresize?rev=b5afc8adac77b1800c26e6747faac670c0cd34dd#b5afc8adac77b1800c26e6747faac670c0cd34dd"
-dependencies = [
- "archmage 0.9.33",
- "imgref",
- "libm",
- "linear-srgb",
- "magetypes",
- "rgb",
- "safe_unaligned_simd",
- "whereat",
- "zenblend",
- "zenpixels 0.3.1",
-]
-
-[[package]]
-name = "zenresize"
-version = "0.3.1"
 source = "git+https://github.com/imazen/zenresize?rev=e3975fb9d6d6b7baa96038a0eb8e27febb37c012#e3975fb9d6d6b7baa96038a0eb8e27febb37c012"
 dependencies = [
  "archmage 0.9.33",
@@ -3130,7 +3104,24 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels 0.3.1",
+ "zenpixels 0.2.16",
+]
+
+[[package]]
+name = "zenresize"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenresize?rev=e6c077561dcb426b23d8e7c3da1ca0e12cc13c5f#e6c077561dcb426b23d8e7c3da1ca0e12cc13c5f"
+dependencies = [
+ "archmage 0.9.33",
+ "imgref",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "rgb",
+ "safe_unaligned_simd",
+ "whereat",
+ "zenblend",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -3238,7 +3229,7 @@ dependencies = [
  "rayon",
  "rgb",
  "zenjpeg",
- "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=b5afc8adac77b1800c26e6747faac670c0cd34dd)",
+ "zenresize 0.3.1 (git+https://github.com/imazen/zenresize?rev=e6c077561dcb426b23d8e7c3da1ca0e12cc13c5f)",
 ]
 
 [[package]]

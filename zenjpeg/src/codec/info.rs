@@ -150,7 +150,7 @@ pub(super) fn decoded_pixel_spec(
             .with_primaries(primaries)
             .with_transfer(Transfer::Linear));
     }
-    zencodec::helpers::descriptor_for_decoded_pixels_v2(base.layout, source, None)
+    zencodec::helpers::pixel_format_for_decoded_pixels(base.layout, source, None)
         .map_err(|error| crate::error::Error::icc_error(alloc::format!("{error}")))
 }
 

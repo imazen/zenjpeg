@@ -543,7 +543,6 @@ fn everything_fixture_dispositions_match_the_decoder() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy best-effort policy setter on purpose.
 fn metadata_policy_agrees_across_probe_decode_streaming_and_inventory() {
     use alloc::borrow::Cow;
     use zencodec::decode::{DecodePolicy, StreamingDecode as _};
@@ -554,7 +553,12 @@ fn metadata_policy_agrees_across_probe_decode_streaming_and_inventory() {
             .with_allow_exif(exif)
             .with_allow_icc(icc)
             .with_allow_xmp(xmp);
-        let job = || JpegDecoderConfig::new().job().with_policy(policy);
+        let job = || {
+            JpegDecoderConfig::new()
+                .job()
+                .try_with_policy(policy)
+                .unwrap()
+        };
         let check = |info: &zencodec::ImageInfo| {
             assert_eq!(
                 info.embedded_metadata.exif.is_some(),
@@ -626,7 +630,7 @@ fn encoder_output_passes_check_inventory() {
         let bytes = crate::JpegEncoderConfig::new()
             .with_progressive(progressive)
             .job()
-            .with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
+            .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
             .encoder()
             .unwrap()
             .encode(slice)

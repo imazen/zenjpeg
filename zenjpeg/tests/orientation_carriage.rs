@@ -19,21 +19,15 @@ use zenpixels::PixelView;
 const W: u32 = 24;
 const H: u32 = 16;
 
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encode(meta: Metadata, policy: Option<EncodePolicy>) -> Result<Vec<u8>, At<CodecError>> {
     let data: Vec<u8> = (0..W * H * 3).map(|i| (i * 13 % 251) as u8).collect();
     let pixels =
         PixelView::new(&data, W, H, W as usize * 3, &zenpixels::formats::RGB8_SRGB).unwrap();
     let mut job = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact);
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact));
     if let Some(policy) = policy {
-        // zenjpeg's checked setter qualifies colour only; EXIF embedding is
-        // still configured through the legacy setter.
-        #[allow(deprecated)]
-        {
-            job = job.with_policy(policy);
-        }
+        job = job.try_with_policy(policy).unwrap();
     }
     Ok(job.encoder()?.encode(pixels)?.into_vec())
 }

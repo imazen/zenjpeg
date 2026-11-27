@@ -217,7 +217,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         &[ImageFormat::Jpeg]
     }
 
-    fn supported_descriptors() -> &'static [ZenPixelFormat] {
+    fn supported_pixel_formats() -> &'static [ZenPixelFormat] {
         DECODE_DESCRIPTORS
     }
 
@@ -239,7 +239,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         //
         // `estimate_decode` keys the output-buffer size off a `PixelFormat`, so
         // map the negotiated descriptor's bytes-per-pixel to the closest format.
-        let format = match image.descriptor().layout.bytes_per_pixel() {
+        let format = match image.pixel_format().layout.bytes_per_pixel() {
             1 | 2 => PixelFormat::Gray,
             4 | 8 => PixelFormat::Rgba,
             _ => PixelFormat::Rgb,
@@ -247,10 +247,10 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
         let e = crate::heuristics::estimate_decode(image.width(), image.height(), format);
         // The model counts one byte per sample. U16 exits hold one more byte per
         // sample in their output buffer.
-        let wide_output = if image.descriptor().layout.sample == SampleType::U16 {
+        let wide_output = if image.pixel_format().layout.sample == SampleType::U16 {
             u64::from(image.width())
                 .saturating_mul(u64::from(image.height()))
-                .saturating_mul(image.descriptor().layout.bytes_per_pixel() as u64 / 2)
+                .saturating_mul(image.pixel_format().layout.bytes_per_pixel() as u64 / 2)
         } else {
             0
         };
@@ -258,7 +258,7 @@ impl zencodec::decode::DecoderConfig for JpegDecoderConfig {
             e.peak_memory_bytes.saturating_add(wide_output),
             e.time_ms as u64,
         )
-        .with_peak_max(e.peak_memory_bytes_max.saturating_add(wide_output))
+        .with_peak_memory_bytes_max(e.peak_memory_bytes_max.saturating_add(wide_output))
         .with_threading(ThreadingInformation::SERIAL)
         .at_cores(compute.cores())
     }
@@ -314,11 +314,6 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         self
     }
 
-    fn with_policy(mut self, policy: zencodec::decode::DecodePolicy) -> Self {
-        self.policy = Some(policy);
-        self
-    }
-
     fn try_set_policy(
         &mut self,
         policy: zencodec::decode::DecodePolicy,
@@ -332,8 +327,8 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         Ok(())
     }
 
-    fn with_crop_hint(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
-        self.crop_hint = Some((x, y, width, height));
+    fn with_crop_hint(mut self, crop: zencodec::Rect) -> Self {
+        self.crop_hint = Some((crop.x, crop.y, crop.width, crop.height));
         self
     }
 
@@ -849,7 +844,10 @@ fn push_decoder_native<'a>(
         // rows at EOF, which batch_max already accounts for. In the non-EOF
         // path count always equals batch_max.
         let mut dst = sink
-            .provide_next_buffer(y, batch_max as u32, width as u32, descriptor.clone())
+            .provide_next_buffer(
+                zencodec::decode::RowStrip::new(y, width as u32, batch_max as u32),
+                descriptor.clone(),
+            )
             .map_err(wrap)?;
         let dst_stride = dst.stride_bytes();
         let dst_bytes = dst.as_strided_bytes_mut();
@@ -1006,7 +1004,7 @@ fn push_decoder_direct<'a>(
     };
 
     let mut dst = sink
-        .provide_next_buffer(0, h, w, descriptor.clone())
+        .provide_next_buffer(zencodec::decode::RowStrip::new(0, w, h), descriptor.clone())
         .map_err(wrap)?;
     let dst_stride = dst.stride_bytes();
     let bpp = format.bytes_per_pixel();
@@ -1154,7 +1152,10 @@ fn push_decoder_via_full_decode<'a>(
     while y < h {
         let rows = cap.min(h - y);
         let mut dst = sink
-            .provide_next_buffer(y, rows, w, descriptor.clone())
+            .provide_next_buffer(
+                zencodec::decode::RowStrip::new(y, w, rows),
+                descriptor.clone(),
+            )
             .map_err(wrap)?;
         for row in 0..rows {
             dst.row_mut(row).copy_from_slice(pixels.row(y + row));

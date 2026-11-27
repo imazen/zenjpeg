@@ -26,14 +26,13 @@ fn rgb_4x4() -> Vec<u8> {
     v
 }
 
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn encode_with_meta(meta: Metadata) -> Vec<u8> {
     let pixels = rgb_4x4();
     let slice =
         PixelView::new(&pixels, 4, 4, 4 * 3, &zenpixels::formats::RGB8_SRGB).expect("pixel slice");
     let enc = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .expect("encoder build");
     enc.encode(slice).expect("encode").into_vec()
@@ -113,7 +112,6 @@ fn emit_rgb_cicp_preserves_the_exact_transfer_code() {
 /// an RGB profile over gray pixels would recolor them (the resolver's
 /// grayscale terminal state).
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_gray_cicp_only_synthesizes_nothing() {
     let pixels: Vec<u8> = (0..16u8).map(|i| i * 16).collect();
     let slice =
@@ -121,7 +119,7 @@ fn emit_gray_cicp_only_synthesizes_nothing() {
     let meta = Metadata::none().with_cicp(zencodec::Cicp::DISPLAY_P3);
     let enc = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .expect("encoder build");
     let jpeg = enc.encode(slice).expect("encode").into_vec();
@@ -190,7 +188,6 @@ fn emit_cicp_pq_synthesizes_icc() {
 /// expressed as an ICC at all. That is an encode ERROR, not a silent skip —
 /// refusing beats shipping an untagged file that decoders assume is sRGB.
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let pixels = rgb_4x4();
     let slice =
@@ -200,7 +197,7 @@ fn emit_cicp_offgrid_unsynthesizable_is_an_encode_error() {
     let meta = Metadata::none().with_cicp(zencodec::Cicp::new(3, 3, 0, true));
     let enc = JpegEncoderConfig::new()
         .job()
-        .with_metadata_policy(meta, MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
         .encoder()
         .expect("encoder build");
     let err = enc

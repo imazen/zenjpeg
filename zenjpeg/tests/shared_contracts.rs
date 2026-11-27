@@ -7,7 +7,6 @@ use zencodec_testkit as tk;
 use zenjpeg::{JpegDecoderConfig as D, JpegEncoderConfig as E};
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn policy_and_inventory_contracts() {
     let img = tk::TestImage::rgb8_gradient(16, 16);
     let enc = E::new();
@@ -15,7 +14,7 @@ fn policy_and_inventory_contracts() {
     let bytes = enc
         .clone()
         .job()
-        .with_metadata_policy(metadata.clone(), MetadataPolicy::PreserveExact)
+        .with_unfiltered_metadata(metadata.filtered(&MetadataPolicy::PreserveExact))
         .encode(img.as_slice())
         .unwrap();
     let expected = D::new()
@@ -31,7 +30,7 @@ fn policy_and_inventory_contracts() {
     );
     for (policy, accepted) in [
         (EncodePolicy::none(), true),
-        (EncodePolicy::strip_all(), false),
+        (EncodePolicy::none().with_strict(true), false),
     ] {
         tk::check_encode_policy_admission(
             enc.clone(),
@@ -47,7 +46,7 @@ fn policy_and_inventory_contracts() {
     }
     for (policy, accepted) in [
         (DecodePolicy::none(), true),
-        (DecodePolicy::strict(), false),
+        (DecodePolicy::untrusted_minimal(), false),
     ] {
         tk::check_decode_policy_admission(
             D::new(),
@@ -66,14 +65,14 @@ fn policy_and_inventory_contracts() {
 
 #[cfg(feature = "metadata-rewrite")]
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn rewrite_preserves_independently_decoded_pixels_and_requested_xmp() {
     let img = tk::TestImage::rgb8_gradient(16, 16);
     let bytes = E::new()
         .job()
-        .with_metadata_policy(
-            Metadata::none().with_xmp(b"<private>SECRET</private>".as_slice()),
-            MetadataPolicy::PreserveExact,
+        .with_unfiltered_metadata(
+            Metadata::none()
+                .with_xmp(b"<private>SECRET</private>".as_slice())
+                .filtered(&MetadataPolicy::PreserveExact),
         )
         .encode(img.as_slice())
         .unwrap();

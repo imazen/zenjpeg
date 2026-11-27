@@ -376,11 +376,10 @@ impl zencodec::decode::DecodeRowSink for CollectSink {
 
     fn provide_next_buffer(
         &mut self,
-        y: u32,
-        height: u32,
-        width: u32,
+        strip: zencodec::decode::RowStrip,
         descriptor: zenpixels::PixelFormat,
     ) -> Result<zenpixels::PixelViewMut<'_>, zencodec::decode::SinkError> {
+        let (y, width, height) = (strip.y, strip.width, strip.height);
         let start = y as usize * self.stride;
         let end = start + height as usize * self.stride;
         zenpixels::PixelViewMut::new_with_format_cow(

@@ -81,11 +81,12 @@ fn checked_record_is_in_real_one_shot_stream_and_dyn_outputs() {
         let legacy = config
             .clone()
             .job()
-            .with_metadata_policy(record.clone(), MetadataPolicy::PreserveExact)
-            .with_policy(
+            .with_unfiltered_metadata(record.filtered(&MetadataPolicy::PreserveExact))
+            .try_with_policy(
                 zencodec::encode::EncodePolicy::none()
                     .with_color(zencodec::ColorEmitPolicy::Verbatim),
             )
+            .unwrap()
             .encoder()
             .unwrap()
             .encode(pixels(&data))
@@ -174,7 +175,6 @@ fn unsupported_hdr_is_atomic_and_checked_clear_replaces_old_record() {
     assert!(info.metadata().icc_profile.is_none());
 }
 #[test]
-#[allow(deprecated)]
 fn later_legacy_setters_cannot_discard_checked_requirements() {
     use zencodec::encode::EncodePolicy;
     let data = vec![12; 16 * 17 * 3];
@@ -184,13 +184,18 @@ fn later_legacy_setters_cannot_discard_checked_requirements() {
             .try_with_metadata_policy(record(), MetadataPolicy::PreserveExact)
             .unwrap()
     };
-    assert!(make().with_metadata(Metadata::none()).encoder().is_err());
+    assert!(
+        make()
+            .with_unfiltered_metadata(Metadata::none())
+            .encoder()
+            .is_err()
+    );
     for policy in [
         EncodePolicy::none().with_embed_exif(false),
         EncodePolicy::none().with_embed_xmp(false),
         EncodePolicy::none().with_embed_icc(false),
     ] {
-        let mut encoder = make().with_policy(policy).encoder().unwrap();
+        let mut encoder = make().try_with_policy(policy).unwrap().encoder().unwrap();
         assert!(
             encoder
                 .begin(16, 17, pixels(&data).format().clone())
@@ -199,7 +204,8 @@ fn later_legacy_setters_cannot_discard_checked_requirements() {
         assert!(encoder.pending_output().is_empty());
         assert!(
             make()
-                .with_policy(policy)
+                .try_with_policy(policy)
+                .unwrap()
                 .encoder()
                 .unwrap()
                 .encode(pixels(&data))
@@ -229,14 +235,13 @@ fn unsupported_opaque_payloads_are_rejected_before_mutation() {
 #[test]
 fn checked_requests_forward_ordinary_and_send_and_refuse_hdr() {
     use zencodec::ContentLightLevel;
-    use zencodec::operation::EncodeRequest;
+    use zencodec::operation::EncodeOptions;
     use zencodec::{CodecSet, ImageFormat};
     let data = vec![23; 16 * 17 * 3];
     let metadata = record();
-    #[allow(deprecated)]
     let expected = metadata.filtered(&MetadataPolicy::PreserveExact);
-    let request = EncodeRequest::new(ImageFormat::Jpeg)
-        .with_metadata_policy(metadata, MetadataPolicy::PreserveExact);
+    let request = EncodeOptions::new(ImageFormat::Jpeg)
+        .require_metadata_policy(metadata, MetadataPolicy::PreserveExact);
     let ordinary = CodecSet::new().with_encoder(JpegEncoderConfig::new());
     let job = request.prepare(&ordinary).unwrap().remove(0).into_job();
     let output = job.into_encoder().unwrap().encode(pixels(&data)).unwrap();
@@ -245,7 +250,7 @@ fn checked_requests_forward_ordinary_and_send_and_refuse_hdr() {
     let job = request.prepare_send(&send).unwrap().remove(0).into_job();
     let output = job.into_encoder().unwrap().encode(pixels(&data)).unwrap();
     assert_retained(output.data(), &expected);
-    let hdr = EncodeRequest::new(ImageFormat::Jpeg).with_metadata_policy(
+    let hdr = EncodeOptions::new(ImageFormat::Jpeg).require_metadata_policy(
         Metadata::none().with_content_light_level(ContentLightLevel::new(1200, 500)),
         MetadataPolicy::PreserveExact,
     );
@@ -254,7 +259,6 @@ fn checked_requests_forward_ordinary_and_send_and_refuse_hdr() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn later_dynamic_replacement_and_policy_conflict_refuse_before_output() {
     use zencodec::encode::EncodePolicy;
     use zencodec::{CodecSet, ImageFormat};
@@ -262,12 +266,13 @@ fn later_dynamic_replacement_and_policy_conflict_refuse_before_output() {
     let mut job = registry.encode_job(ImageFormat::Jpeg).unwrap();
     job.try_set_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap();
-    job.set_metadata(Metadata::none());
+    job.set_unfiltered_metadata(Metadata::none());
     assert!(job.into_encoder().is_err());
     let mut job = registry.encode_job(ImageFormat::Jpeg).unwrap();
     job.try_set_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap();
-    job.set_policy(EncodePolicy::none().with_embed_xmp(false));
+    job.try_set_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap();
     let mut encoder = job.into_encoder().unwrap();
     let data = vec![0; 16 * 17 * 3];
     assert!(
@@ -324,23 +329,22 @@ fn checked_exif_xmp_reach_pull_and_srgba_paths() {
         .unwrap();
     assert_retained(pulled.data(), &expected);
     let mut rgba = vec![64u8; 16 * 17 * 4];
-    let output = job()
-        .encoder()
-        .unwrap()
-        .encode_srgba8(&mut rgba, true, 16, 17, 16)
-        .unwrap();
+    let rgba_view =
+        zenpixels::PixelViewMut::new(&mut rgba, 16, 17, 16 * 4, &zenpixels::formats::RGBA8_SRGB)
+            .unwrap();
+    let output = job().encoder().unwrap().encode_in_place(rgba_view).unwrap();
     assert_retained(output.data(), &expected);
 }
 
 #[test]
-#[allow(deprecated)]
 fn conflicts_refuse_plan_and_pull_before_source_access() {
     use zencodec::encode::{EncodeDeclaration, EncodePolicy};
     let job = JpegEncoderConfig::new()
         .job()
         .try_with_metadata_policy(record(), MetadataPolicy::PreserveExact)
         .unwrap()
-        .with_policy(EncodePolicy::none().with_embed_xmp(false));
+        .try_with_policy(EncodePolicy::none().with_embed_xmp(false))
+        .unwrap();
     let desc = pixels(&vec![0; 16 * 17 * 3]).format().clone();
     assert!(
         job.plan_encode(&EncodeDeclaration::new(16, 17, desc))
@@ -424,8 +428,9 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
     let legacy = JpegEncoderConfig::new()
         .with_huffman(false)
         .job()
-        .with_metadata_policy(meta.clone(), MetadataPolicy::PreserveExact)
-        .with_policy(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim))
+        .with_unfiltered_metadata(meta.filtered(&MetadataPolicy::PreserveExact))
+        .try_with_policy(EncodePolicy::none().with_color(ColorEmitPolicy::Verbatim))
+        .unwrap()
         .encoder()
         .unwrap()
         .encode(px())
@@ -453,12 +458,17 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
         CicpEmission::WhereValidCarrier,
     ));
     let conflicting = EncodePolicy::none().with_color(drop_icc);
-    let mut encoder = job().with_policy(conflicting).encoder().unwrap();
+    let mut encoder = job()
+        .try_with_policy(conflicting)
+        .unwrap()
+        .encoder()
+        .unwrap();
     assert!(encoder.begin(16, 17, PixelFormat::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());
     assert!(
         job()
-            .with_policy(conflicting)
+            .try_with_policy(conflicting)
+            .unwrap()
             .encoder()
             .unwrap()
             .encode(px())
@@ -467,7 +477,6 @@ fn required_srgb_icc_is_verbatim_by_default_but_explicit_drop_refuses() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn required_field_only_orientation_cannot_be_discarded_later() {
     use zencodec::encode::EncodePolicy;
     let job = JpegEncoderConfig::new()
@@ -478,7 +487,8 @@ fn required_field_only_orientation_cannot_be_discarded_later() {
             MetadataPolicy::PreserveExact,
         )
         .unwrap()
-        .with_policy(EncodePolicy::none().with_embed_exif(false));
+        .try_with_policy(EncodePolicy::none().with_embed_exif(false))
+        .unwrap();
     let mut encoder = job.encoder().unwrap();
     assert!(encoder.begin(16, 17, PixelFormat::RGB8_SRGB).is_err());
     assert!(encoder.pending_output().is_empty());

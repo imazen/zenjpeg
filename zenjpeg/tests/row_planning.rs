@@ -455,7 +455,6 @@ fn rows_contradicting_the_header_refuse_before_encoding() {
 }
 
 #[test]
-#[allow(deprecated)] // Exercises the legacy metadata setter.
 fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
     let config = JpegEncoderConfig::new();
     let plan = |job: zenjpeg::JpegEncodeJob, width, height| {
@@ -481,9 +480,10 @@ fn invalid_input_limits_canvas_and_metadata_refuse_during_planning() {
             .clone()
             .job()
             .with_limits(zencodec::ResourceLimits::none().with_max_memory(1)),
-        config.clone().job().with_metadata_policy(
-            zencodec::Metadata::default().with_exif(vec![0; 70_000]),
-            zencodec::MetadataPolicy::PreserveExact,
+        config.clone().job().with_unfiltered_metadata(
+            zencodec::Metadata::default()
+                .with_exif(vec![0; 70_000])
+                .filtered(&zencodec::MetadataPolicy::PreserveExact),
         ),
     ] {
         assert!(plan(job, 32, 32).is_err());
