@@ -55,7 +55,7 @@ mod extras;
 mod fused_parallel;
 mod image;
 mod native;
-mod parser;
+pub(crate) mod parser;
 mod pipeline;
 mod pool;
 mod precision;
@@ -1244,6 +1244,27 @@ impl DecodeConfig {
     /// two-phase move of the owned Vec) intentionally stays per-variant; the
     /// remaining structural unification is tracked with the CoeffSource
     /// decision (docs/DECODER_UNIFICATION_PLAN.md).
+    /// Whether `parser`'s parsed frame header can safely run through the
+    /// single-scan MCU-row incremental streaming path (`decode_mcu_row_slice`)
+    /// with 0-bit parity against one-shot decode.
+    ///
+    /// Note: `plan.interleaved` is NOT checked here because in chunked input
+    /// `read_header()` may finish at SOF before SOS arrives (causing the SOF
+    /// forward peek to see `None`). Callers verify `scan_data.interleaved`
+    /// once `parser.into_scan_data()` has parsed the actual SOS marker.
+    #[cfg(feature = "zencodec")]
+    pub(crate) fn can_stream_incremental(parser: &parser::JpegParser<'_>) -> bool {
+        if parser.height == 0
+            || parser.precision != 8
+            || !matches!(parser.mode, JpegMode::Baseline)
+            || !matches!(parser.num_components, 1 | 3)
+            || parser.color_model == color_model::ColorModel::Xyb
+        {
+            return false;
+        }
+        parser.plan().strip()
+    }
+
     fn classify_scanline_route(parser: &parser::JpegParser<'_>) -> Result<ScanlineRoute> {
         if parser.height == 0 {
             return Err(Error::unsupported_feature(
@@ -2045,7 +2066,7 @@ impl DecodeConfig {
     }
 
     /// Resolves and applies the user's crop region to a scanline reader.
-    fn apply_crop(
+    pub(crate) fn apply_crop(
         &self,
         reader: &mut ScanlineReader<'_>,
         img_w: u32,

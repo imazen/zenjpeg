@@ -45,6 +45,7 @@
 
 mod decode;
 mod encode;
+mod incremental;
 mod info;
 #[cfg(feature = "inventory")]
 mod inventory;
@@ -55,6 +56,7 @@ mod tests;
 
 pub use decode::{CmykHandling, JpegDecodeJob, JpegDecoder, JpegDecoderConfig};
 pub use encode::{JpegEncodeJob, JpegEncoder, JpegEncoderConfig};
+pub use incremental::JpegIncrementalDecoder;
 pub use streaming::JpegStreamingDecoder;
 
 /// Alias for backwards compatibility within the `zencodec` feature gate.

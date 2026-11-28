@@ -52,7 +52,7 @@ static JPEG_DECODE_CAPS: DecodeCapabilities = {
 /// Wraps [`crate::decode::DecodeConfig`] with the zencodec trait interface.
 #[derive(Clone, Debug)]
 pub struct JpegDecoderConfig {
-    inner: crate::decode::DecodeConfig,
+    pub(super) inner: crate::decode::DecodeConfig,
     #[allow(dead_code)]
     limits: ResourceLimits,
     /// How to handle CMYK/YCCK 4-component JPEGs. See [`CmykHandling`].
@@ -594,9 +594,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         Err(ErrorKind::UnsupportedOperation(UnsupportedOperation::AnimationDecode).into())
     }
 
-    /// Incremental (sans-I/O) decode: the header is reported as soon as it
-    /// probes, and the image decodes through `push_decoder` once the whole
-    /// file is offered (a native baseline decoder that streams MCU rows is planned; progressive, arithmetic, CMYK and transformed outputs need the whole file in any case).
+    /// Incremental (sans-I/O) decode: baseline JPEGs with nearest-neighbor
+    /// upsampling stream MCU row by MCU row as compressed bytes arrive;
+    /// progressive, arithmetic, CMYK, fancy-upsampled, and transformed outputs
+    /// fall back seamlessly to the whole-file buffered path.
     fn dyn_incremental_decoder(
         self,
         preferred: &[ZenPixelFormat],
@@ -604,9 +605,10 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
         alloc::boxed::Box<zencodec::decode::DynIncrementalDecoder>,
         zencodec::decode::BoxedError,
     > {
-        Ok(zencodec::decode::erase_incremental(
-            zencodec::helpers::WholeFileIncremental::new(self, preferred),
-        ))
+        let dec = self
+            .into_incremental_decoder(preferred)
+            .map_err(|e| alloc::boxed::Box::new(e) as zencodec::decode::BoxedError)?;
+        Ok(zencodec::decode::erase_incremental(dec))
     }
 
     #[cfg(feature = "controlled-decode")]
@@ -623,6 +625,57 @@ impl<'a> zencodec::decode::DecodeJob<'a> for JpegDecodeJob {
 }
 
 impl JpegDecodeJob {
+    /// Construct a sans-I/O [`JpegIncrementalDecoder`](super::JpegIncrementalDecoder)
+    /// that resumes baseline JPEG decoding MCU row by MCU row between input chunks
+    /// when configured for untransformed 8-bit nearest-neighbor decoding, and falls
+    /// back to whole-file buffering for progressive/fancy-upsampled/transformed jobs.
+    pub fn into_incremental_decoder(
+        self,
+        preferred: &[ZenPixelFormat],
+    ) -> Result<super::incremental::JpegIncrementalDecoder, At<CodecError>> {
+        let can_try_stream = self.config.inner.chroma_upsampling
+            == crate::decode::ChromaUpsampling::NearestNeighbor
+            && self.config.inner.correct_color.is_none()
+            && !self.config.inner.force_f32_idct
+            && self.config.inner.crop_region.is_none()
+            && self.config.inner.decode_transform.is_none()
+            && self.crop_hint.is_none()
+            && !will_auto_orient(self.orientation)
+            && !matches!(
+                self.orientation,
+                zencodec::OrientationHint::ExactTransform(o)
+                    if o != zencodec::Orientation::Identity
+            )
+            && self.config.inner.output_target == crate::decode::OutputTarget::Srgb8
+            && self.config.inner.deblock_mode == crate::decode::DeblockMode::Off
+            && self.policy.is_none()
+            && !preferred.iter().any(|p| {
+                p.layout.sample != zenpixels::SampleType::U8
+                    || !matches!(
+                        p.layout.order,
+                        zenpixels::ChannelOrder::Gray
+                            | zenpixels::ChannelOrder::Rgb
+                            | zenpixels::ChannelOrder::Rgba
+                            | zenpixels::ChannelOrder::Rgbx
+                            | zenpixels::ChannelOrder::Bgra
+                            | zenpixels::ChannelOrder::Bgrx
+                    )
+            })
+            && self.config.inner.strictness == crate::decode::Strictness::Balanced
+            && self.gain_map_render == zencodec::GainMapRender::BaseOnly;
+
+        Ok(super::incremental::JpegIncrementalDecoder::new(
+            self.config,
+            self.limits,
+            self.crop_hint,
+            self.orientation,
+            self.policy,
+            self.gain_map_render,
+            self.stop,
+            preferred,
+            !can_try_stream,
+        ))
+    }
     /// The inner decode config with this job's resource limits applied —
     /// probes must honor `with_limits` exactly like the decode path does
     /// (a 108 MP corpus file probes fine under a raised `max_pixels` but the
@@ -1225,7 +1278,7 @@ fn check_progressive_policy(
     Ok(())
 }
 
-fn build_decode_config(
+pub(super) fn build_decode_config(
     inner: &crate::decode::DecodeConfig,
     limits: &ResourceLimits,
     crop_hint: Option<(u32, u32, u32, u32)>,
@@ -1453,6 +1506,41 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
     type Error = At<CodecError>;
 
     fn decode(self) -> Result<DecodeOutput, Self::Error> {
+        self.decode_with_stop(None)
+    }
+}
+
+impl<'a> JpegDecoder<'a> {
+    /// Execute one-shot decode while polling an optional additional stop token
+    /// alongside any job-owned stop.
+    pub(super) fn decode_with_stop(
+        self,
+        extra_stop: Option<&dyn enough::Stop>,
+    ) -> Result<DecodeOutput, At<CodecError>> {
+        struct ComposedStop<'s> {
+            owned: Option<&'s zencodec::SharedPulse>,
+            extra: Option<&'s dyn enough::Stop>,
+        }
+        impl enough::Stop for ComposedStop<'_> {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                if let Some(o) = self.owned {
+                    o.check()?;
+                }
+                if let Some(e) = self.extra {
+                    e.check()?;
+                }
+                Ok(())
+            }
+            fn may_stop(&self) -> bool {
+                self.owned.is_some_and(|o| o.may_stop()) || self.extra.is_some_and(|e| e.may_stop())
+            }
+        }
+        let composed = ComposedStop {
+            owned: self.stop.as_ref(),
+            extra: extra_stop,
+        };
+        let stop: &dyn enough::Stop = &composed;
+        stop.check().map_err(Error::from)?;
         {
             use crate::decode::OutputTarget;
             use crate::types::PixelFormat;
@@ -1468,7 +1556,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 zencodec::GainMapRender::ReconstructHdr { target_headroom } => {
                     #[cfg(feature = "ultrahdr")]
                     {
-                        if let Some(output) = self.decode_reconstruct_hdr(target_headroom)? {
+                        if let Some(output) = self.decode_reconstruct_hdr(target_headroom, stop)? {
                             return Ok(output);
                         }
                         // No gain map: the base image IS the image.
@@ -1493,6 +1581,14 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
             let preferred = &self.preferred;
 
             let limits = self.limits;
+            if limits.max_memory_bytes == Some(0) && !data.is_empty() {
+                return Err(Error::resource_limit_exceeded(
+                    zencodec::LimitKind::Memory,
+                    data.len() as u64,
+                    0,
+                )
+                .into());
+            }
             let mut cfg = build_decode_config(
                 &self.config.inner,
                 &limits,
@@ -1515,13 +1611,12 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 cfg = cfg.output_target(OutputTarget::LinearF32);
             }
 
-            // Dimension limits. `check_dimensions` yields a `LimitExceeded`
-            // (foreign — no envelope bridge), so map through the native `Error`.
-            if limits.max_width.is_some() || limits.max_height.is_some() {
-                limits
-                    .check_dimensions(header.dimensions.width, header.dimensions.height)
-                    .map_err(Error::from)?;
-            }
+            // Dimension and pixel limits (including explicit `max_pixels: Some(0)`).
+            // `check_dimensions` yields a `LimitExceeded` (foreign — no envelope bridge),
+            // so map through the native `Error`.
+            limits
+                .check_dimensions(header.dimensions.width, header.dimensions.height)
+                .map_err(Error::from)?;
 
             check_progressive_policy(&header, self.policy.as_ref())?;
 
@@ -1571,10 +1666,6 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 }
             }
 
-            let stop: &dyn enough::Stop = match &self.stop {
-                Some(s) => s,
-                None => &enough::Unstoppable,
-            };
             let mut result = cfg.decode(&data, stop)?;
 
             let w = result.width();
@@ -1711,7 +1802,7 @@ impl zencodec::decode::Decode for JpegDecoder<'_> {
                 // buffer above (#151).
                 let base_transform = cfg.compute_effective_transform_from_data(&data);
                 if let Some(dgm) =
-                    decode_gain_map_components(extras, base_transform, cfg.preserve.xmp)?
+                    decode_gain_map_components(extras, base_transform, cfg.preserve.xmp, stop)?
                 {
                     output = output.with_extras(dgm);
                 }
@@ -1763,6 +1854,7 @@ impl JpegDecoder<'_> {
     fn decode_reconstruct_hdr(
         &self,
         target_headroom: Option<f32>,
+        stop: &dyn enough::Stop,
     ) -> Result<Option<DecodeOutput>, Error> {
         use crate::ultrahdr::UltraHdrExtras;
         use ultrahdr_core::gainmap::{HdrOutputFormat, apply_gainmap};
@@ -1771,6 +1863,13 @@ impl JpegDecoder<'_> {
         const SDR_WHITE_NITS: f32 = 203.0;
 
         let limits = self.limits;
+        if limits.max_memory_bytes == Some(0) && !self.data.is_empty() {
+            return Err(Error::resource_limit_exceeded(
+                zencodec::LimitKind::Memory,
+                self.data.len() as u64,
+                0,
+            ));
+        }
         // Crop hints are optional ("decoder may ignore"): a cropped base
         // cannot be aligned with the full-frame gain map under normalized
         // sampling, so this path decodes full-frame instead of mis-rendering
@@ -1800,14 +1899,8 @@ impl JpegDecoder<'_> {
 
         let header = read_job_info(&cfg, &self.data, self.policy.as_ref())?;
         check_progressive_policy(&header, self.policy.as_ref())?;
-        if limits.max_width.is_some() || limits.max_height.is_some() {
-            limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
-        }
+        limits.check_dimensions(header.dimensions.width, header.dimensions.height)?;
 
-        let stop: &dyn enough::Stop = match &self.stop {
-            Some(s) => s,
-            None => &enough::Unstoppable,
-        };
         let mut result = cfg.decode(&self.data, stop)?;
         let w = result.width();
         let h = result.height();
@@ -1829,12 +1922,13 @@ impl JpegDecoder<'_> {
                 "ReconstructHdr requested but no gain-map parameters are readable",
             )
         })??;
-        let gainmap = crate::ultrahdr::decode_gainmap_with_xmp(&extras, cfg.preserve.xmp)
-            .ok_or_else(|| {
-                Error::unsupported_feature(
-                    "ReconstructHdr requested but the MPF has no gain-map image",
-                )
-            })??;
+        let gainmap =
+            crate::ultrahdr::decode_gainmap_with_xmp_stop(&extras, cfg.preserve.xmp, stop)
+                .ok_or_else(|| {
+                    Error::unsupported_feature(
+                        "ReconstructHdr requested but the MPF has no gain-map image",
+                    )
+                })??;
 
         let pixels_u8 = result
             .into_pixels_u8()
@@ -1857,7 +1951,7 @@ impl JpegDecoder<'_> {
         let sdr = PixelBuf::from_bytes(pixels_u8, w, h, descriptor)
             .map_err(|_| Error::internal("pixel buffer creation failed"))?;
 
-        let sdr = crate::ultrahdr::prepare_base_pixels(sdr, extras.icc_profile())?;
+        let sdr = crate::ultrahdr::prepare_base_pixels_with_stop(sdr, extras.icc_profile(), stop)?;
 
         // Output form: honor an f16 preference; default linear f32 RGBA.
         let wants_f16 = self
@@ -1877,8 +1971,13 @@ impl JpegDecoder<'_> {
         let capacity_max = ultrahdr_core::full_reconstruction_boost(&metadata);
         let display_boost = target_headroom.unwrap_or(capacity_max).max(1.0);
 
-        let hdr = apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop)
-            .map_err(|e| Error::icc_error(alloc::format!("gain-map apply failed: {e}")))?;
+        let hdr =
+            apply_gainmap(&sdr, &gainmap, &metadata, display_boost, format, stop).map_err(|e| {
+                match e.error() {
+                    ultrahdr_core::Error::Stopped(reason) => Error::from(*reason),
+                    _ => Error::icc_error(alloc::format!("gain-map apply failed: {e}")),
+                }
+            })?;
         drop(sdr);
         let hdr = if let Some(target) = self.config.inner.correct_color {
             use crate::color::icc::TargetColorSpace;
@@ -2116,12 +2215,14 @@ fn decode_gain_map_components(
     extras: &crate::decode::DecodedExtras,
     base_transform: crate::lossless::LosslessTransform,
     allow_xmp: bool,
+    stop: &dyn enough::Stop,
 ) -> Result<Option<zencodec::decode::DecodedGainMap>, Error> {
     let Some(metadata) = crate::ultrahdr::metadata_with_xmp(extras, allow_xmp) else {
         return Ok(None);
     };
     let (metadata, _) = metadata?;
-    let Some(gainmap) = crate::ultrahdr::decode_gainmap_with_xmp(extras, allow_xmp) else {
+    let Some(gainmap) = crate::ultrahdr::decode_gainmap_with_xmp_stop(extras, allow_xmp, stop)
+    else {
         return Ok(None);
     };
     let gainmap = orient_gain_map(gainmap?, base_transform);

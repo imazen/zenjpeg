@@ -197,13 +197,13 @@ zenflate = { git = "https://github.com/imazen/zenflate", rev = "7270e38faca9cdba
 zenpng = { git = "https://github.com/imazen/zenpng", rev = "af5d24b89d91efb3db91a632047a0e0c835fe007" }
 
 # Pixel and codec interchange cohort for this migration.
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
-zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
-zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-io = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-coroutine = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "26bea4bcc01849a5113127f3766af73ae35e50f4" }
 ultrahdr-rs = { git = "https://github.com/imazen/ultrahdr", rev = "26bea4bcc01849a5113127f3766af73ae35e50f4" }
 

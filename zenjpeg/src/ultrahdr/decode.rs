@@ -74,6 +74,16 @@ pub(crate) fn decode_gainmap_with_xmp(
     extras: &DecodedExtras,
     allow_xmp: bool,
 ) -> Option<Result<GainMap>> {
+    decode_gainmap_with_xmp_stop(extras, allow_xmp, &Unstoppable)
+}
+
+/// Like [`decode_gainmap_with_xmp`], propagating cooperative cancellation through
+/// the auxiliary gain-map JPEG decode.
+pub(crate) fn decode_gainmap_with_xmp_stop(
+    extras: &DecodedExtras,
+    allow_xmp: bool,
+    stop: &dyn enough::Stop,
+) -> Option<Result<GainMap>> {
     let jpeg = extras.gainmap()?;
     let iso = iso21496_from_gainmap_jpeg(jpeg).is_some_and(|record| record.is_ok());
     let xmp_channels = if iso {
@@ -83,7 +93,7 @@ pub(crate) fn decode_gainmap_with_xmp(
             .and_then(core::result::Result::ok)
             .map(|(params, _)| params.is_single_channel())
     };
-    Some(decode_gainmap_jpeg(jpeg, xmp_channels))
+    Some(decode_gainmap_jpeg_with_stop(jpeg, xmp_channels, stop))
 }
 
 /// Resolve gain-map metadata without consulting XMP when extraction is denied.
@@ -357,6 +367,15 @@ pub(crate) fn base_color(icc: Option<&[u8]>) -> Result<(ColorPrimaries, Transfer
 /// Convert an ICC base that permits metadata identification only into its named
 /// working space. Source ICC authority stays on the strided slice through CMS.
 pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Result<PixelBuffer> {
+    prepare_base_pixels_with_stop(pixels, icc, &Unstoppable)
+}
+
+/// Like [`prepare_base_pixels`], checking `stop` per row during ICC conversion.
+pub(crate) fn prepare_base_pixels_with_stop(
+    pixels: PixelBuffer,
+    icc: Option<&[u8]>,
+    stop: &dyn enough::Stop,
+) -> Result<PixelBuffer> {
     let Some(icc) = icc else { return Ok(pixels) };
     if crate::color::icc::is_xyb_profile(icc)
         || zenpixels::icc::IccIdentification::from_icc_substitutable(icc).is_some()
@@ -388,6 +407,7 @@ pub(crate) fn prepare_base_pixels(pixels: PixelBuffer, icc: Option<&[u8]>) -> Re
     let source = pixels.as_view();
     let mut destination = output.as_view_mut();
     for y in 0..pixels.height() {
+        stop.check()?;
         transform
             .transform_row(source.row(y), destination.row_mut(y), pixels.width())
             .map_err(ultrahdr_to_zenjpeg_error)?;
@@ -411,7 +431,19 @@ fn rgb_to_rgba8(rgb: &[u8]) -> Vec<u8> {
 /// for the luma plane of a color JPEG. Native Gray keeps exact luma codes.
 /// The map decodes in stored orientation; callers orient it to the base.
 pub(crate) fn decode_gainmap_jpeg(jpeg_data: &[u8], xmp_channels: Option<bool>) -> Result<GainMap> {
+    decode_gainmap_jpeg_with_stop(jpeg_data, xmp_channels, &Unstoppable)
+}
+
+/// Like [`decode_gainmap_jpeg`], propagating cooperative cancellation through
+/// the auxiliary JPEG decode without swallowing cancellation into the RGB fallback.
+pub(crate) fn decode_gainmap_jpeg_with_stop(
+    jpeg_data: &[u8],
+    xmp_channels: Option<bool>,
+    stop: &dyn enough::Stop,
+) -> Result<GainMap> {
+    stop.check()?;
     let info = Decoder::new().read_info(jpeg_data)?;
+    stop.check()?;
     let single_channel = match info.num_components {
         1 => true,
         3 => xmp_channels.unwrap_or(false),
@@ -423,26 +455,36 @@ pub(crate) fn decode_gainmap_jpeg(jpeg_data: &[u8], xmp_channels: Option<bool>) 
     };
     if single_channel {
         // Some color encodings can't produce Gray output ("unsupported color
-        // conversion"); those fall through to the RGB path below.
-        if let Ok(decoded) = Decoder::new()
+        // conversion"); those fall through to the RGB path below, but
+        // cancellation must always propagate immediately.
+        match Decoder::new()
             .output_format(JpegPixelFormat::Gray)
             .auto_orient(false)
-            .decode(jpeg_data, enough::Unstoppable)
-            && let Some(px) = decoded.pixels_u8()
+            .decode(jpeg_data, stop)
         {
-            return Ok(GainMap {
-                width: decoded.width(),
-                height: decoded.height(),
-                channels: 1,
-                data: px.to_vec(),
-            });
+            Ok(decoded) => {
+                if let Some(px) = decoded.pixels_u8() {
+                    return Ok(GainMap {
+                        width: decoded.width(),
+                        height: decoded.height(),
+                        channels: 1,
+                        data: px.to_vec(),
+                    });
+                }
+            }
+            Err(e) if matches!(e.kind(), crate::error::ErrorKind::Cancelled(_)) => {
+                return Err(e);
+            }
+            Err(_) => {
+                stop.check()?;
+            }
         }
     }
 
     let decoded = Decoder::new()
         .output_format(JpegPixelFormat::Rgb)
         .auto_orient(false)
-        .decode(jpeg_data, enough::Unstoppable)?;
+        .decode(jpeg_data, stop)?;
     let width = decoded.width();
     let height = decoded.height();
     let rgb = decoded

@@ -1781,3 +1781,1034 @@ mod pattern_b_envelope_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod incremental_decode_tests {
+    use super::*;
+    use core::num::NonZeroU32;
+    use zencodec::decode::{
+        Decode as _, DecodeJob as _, DecodeRowSink, DecoderConfig as _, DynDecoderConfig, Event,
+        IncrementalDecode, Input, OutputInfo, RowStrip, SinkError,
+    };
+
+    struct CollectSink {
+        width: u32,
+        height: u32,
+        format: Option<ZenPixelFormat>,
+        pixels: Vec<u8>,
+        max_rows: u32,
+        finished: bool,
+    }
+
+    impl CollectSink {
+        fn new(max_rows: u32) -> Self {
+            Self {
+                width: 0,
+                height: 0,
+                format: None,
+                pixels: Vec::new(),
+                max_rows,
+                finished: false,
+            }
+        }
+    }
+
+    impl DecodeRowSink for CollectSink {
+        fn begin(
+            &mut self,
+            width: u32,
+            height: u32,
+            format: ZenPixelFormat,
+        ) -> Result<(), SinkError> {
+            self.width = width;
+            self.height = height;
+            let bpp = format.layout.bytes_per_pixel();
+            self.pixels = vec![0u8; width as usize * height as usize * bpp];
+            self.format = Some(format);
+            Ok(())
+        }
+
+        fn max_buffer_rows(&self) -> NonZeroU32 {
+            NonZeroU32::new(self.max_rows.max(1)).unwrap()
+        }
+
+        fn provide_next_buffer(
+            &mut self,
+            strip: RowStrip,
+            format: ZenPixelFormat,
+        ) -> Result<PixelViewMut<'_>, SinkError> {
+            let bpp = format.layout.bytes_per_pixel();
+            let row_bytes = self.width as usize * bpp;
+            let start = strip.y as usize * row_bytes;
+            let end = start + strip.height as usize * row_bytes;
+            let fmt = self.format.as_ref().unwrap();
+            Ok(PixelViewMut::new(
+                &mut self.pixels[start..end],
+                strip.width,
+                strip.height,
+                row_bytes,
+                fmt,
+            )
+            .unwrap())
+        }
+
+        fn finish(&mut self) -> Result<(), SinkError> {
+            self.finished = true;
+            Ok(())
+        }
+    }
+
+    fn make_pattern_rgb(w: usize, h: usize) -> Vec<Rgb<u8>> {
+        let mut out = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                out.push(Rgb {
+                    r: ((x * 7 + y * 3) & 0xFF) as u8,
+                    g: ((x * 5 ^ y * 11) & 0xFF) as u8,
+                    b: ((x * 13 + y * 17) & 0xFF) as u8,
+                });
+            }
+        }
+        out
+    }
+
+    fn drive_incremental(
+        dec: &mut dyn IncrementalDecode<Error = At<CodecError>>,
+        data: &[u8],
+        chunk_size: usize,
+        sink_max_rows: u32,
+    ) -> (CollectSink, OutputInfo, bool) {
+        let mut sink = CollectSink::new(sink_max_rows);
+        let mut emitted_before_eof = false;
+        let mut cursor = 0usize;
+        let mut delivered = 0usize;
+
+        loop {
+            let req = dec.requested();
+            let offset = req
+                .first()
+                .map(|r| match *r {
+                    zencodec::decode::InputRequest::AtLeast { offset, .. } => offset as usize,
+                    zencodec::decode::InputRequest::Range(r) => r.offset as usize,
+                    _ => cursor,
+                })
+                .unwrap_or(cursor);
+            if offset > delivered {
+                delivered = offset.min(data.len());
+            }
+            if delivered < data.len() && offset == delivered {
+                delivered = (delivered + chunk_size).min(data.len());
+            }
+            let slice = &data[offset.min(data.len())..delivered];
+            let mut input = Input::new(offset as u64, slice);
+            if delivered >= data.len() {
+                input.total_len = Some(data.len() as u64);
+            }
+            let progress = dec.step(input, &mut sink, None).unwrap();
+            cursor = offset + progress.consumed;
+            match progress.event {
+                Event::Need => {
+                    if progress.consumed == 0 && delivered < data.len() {
+                        delivered = (delivered + chunk_size).min(data.len());
+                    }
+                }
+                Event::Rows { rows, .. } => {
+                    assert!(rows > 0);
+                    if delivered < data.len() {
+                        emitted_before_eof = true;
+                    }
+                }
+                Event::Done(done) => {
+                    assert!(sink.finished);
+                    return (sink, done, emitted_before_eof);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn encode_baseline(w: usize, h: usize, subsampling: ChromaSubsampling) -> Vec<u8> {
+        let pixels = make_pattern_rgb(w, h);
+        let cfg = EncoderConfig::ycbcr(85.0, subsampling).progressive(false);
+        let mut enc = cfg
+            .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(bytemuck::cast_slice(&pixels), enough::Unstoppable)
+            .unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn incremental_baseline_nearest_matches_oneshot_bit_exact_and_streams_before_eof() {
+        let jpeg = encode_baseline(128, 128, ChromaSubsampling::Quarter);
+        let mut cfg = JpegDecoderConfig::new();
+        cfg.inner_mut().chroma_upsampling = crate::decode::ChromaUpsampling::NearestNeighbor;
+
+        let oneshot = cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .decoder(Cow::Borrowed(&jpeg), &[ZenPixelFormat::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let ref_bytes = oneshot.pixels().as_contiguous_bytes().unwrap().to_vec();
+
+        for &chunk_size in &[jpeg.len(), 512, 128, 33, 7, 3, 1] {
+            let mut inc = cfg
+                .clone()
+                .job()
+                .with_orientation(zencodec::OrientationHint::Preserve)
+                .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                .unwrap();
+            let (sink, done, before_eof) = drive_incremental(&mut inc, &jpeg, chunk_size, 16);
+            assert_eq!(done.width, 128);
+            assert_eq!(done.height, 128);
+            assert_eq!(
+                sink.pixels, ref_bytes,
+                "baseline 128x128 chunk_size={chunk_size} mismatch"
+            );
+            if chunk_size <= 256 {
+                assert!(
+                    before_eof,
+                    "baseline NearestNeighbor + Preserve must emit MCU rows before EOF (chunk_size={chunk_size})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_baseline_odd_dimensions_and_small_sink_strips_match_bit_exact() {
+        let jpeg = encode_baseline(53, 37, ChromaSubsampling::Quarter);
+        let mut cfg = JpegDecoderConfig::new();
+        cfg.inner_mut().chroma_upsampling = crate::decode::ChromaUpsampling::NearestNeighbor;
+
+        let oneshot = cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .decoder(Cow::Borrowed(&jpeg), &[ZenPixelFormat::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let ref_bytes = oneshot.pixels().as_contiguous_bytes().unwrap().to_vec();
+
+        // max_buffer_rows = 3 forces multi-slice delivery across every 16-row MCU batch.
+        for &chunk_size in &[jpeg.len(), 64, 7, 1] {
+            let mut inc = cfg
+                .clone()
+                .job()
+                .with_orientation(zencodec::OrientationHint::Preserve)
+                .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                .unwrap();
+            let (sink, done, _) = drive_incremental(&mut inc, &jpeg, chunk_size, 3);
+            assert_eq!(done.width, 53);
+            assert_eq!(done.height, 37);
+            assert_eq!(
+                sink.pixels, ref_bytes,
+                "odd 53x37 small-strip chunk_size={chunk_size} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_progressive_and_xyb_and_triangle_fallback_match_bit_exact() {
+        // 1) Progressive with NearestNeighbor -> dynamic buffered_whole_file fallback
+        let pixels = make_pattern_rgb(64, 64);
+        let prog_cfg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
+        let mut enc = prog_cfg
+            .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(bytemuck::cast_slice(&pixels), enough::Unstoppable)
+            .unwrap();
+        let prog_jpeg = enc.finish().unwrap();
+
+        let mut nn_cfg = JpegDecoderConfig::new();
+        nn_cfg.inner_mut().chroma_upsampling = crate::decode::ChromaUpsampling::NearestNeighbor;
+        let prog_ref = nn_cfg
+            .clone()
+            .decode(&prog_jpeg)
+            .unwrap()
+            .pixels()
+            .as_contiguous_bytes()
+            .unwrap()
+            .to_vec();
+        for &chunk_size in &[prog_jpeg.len(), 128, 17, 1] {
+            let mut inc = nn_cfg
+                .clone()
+                .job()
+                .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                .unwrap();
+            let (sink, _, _) = drive_incremental(&mut inc, &prog_jpeg, chunk_size, 5);
+            assert_eq!(sink.pixels, prog_ref, "progressive chunk={chunk_size}");
+        }
+
+        // 2) XYB with NearestNeighbor -> dynamic buffered_whole_file fallback (preserves XYB->sRGB)
+        let xyb_pixels = make_pattern_rgb(32, 32);
+        let xyb_jpeg = EncoderConfig::xyb(90, crate::encode::XybSubsampling::BQuarter)
+            .encode(&xyb_pixels, 32, 32)
+            .unwrap();
+        let xyb_ref = nn_cfg
+            .clone()
+            .decode(&xyb_jpeg)
+            .unwrap()
+            .pixels()
+            .as_contiguous_bytes()
+            .unwrap()
+            .to_vec();
+        let mut xyb_inc = nn_cfg
+            .clone()
+            .job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (sink, _, _) = drive_incremental(&mut xyb_inc, &xyb_jpeg, 37, 8);
+        assert_eq!(sink.pixels, xyb_ref, "XYB incremental fallback mismatch");
+
+        // 3) Default Triangle upsampling via dyn_incremental_decoder
+        let base_jpeg = encode_baseline(48, 40, ChromaSubsampling::Quarter);
+        let tri_cfg = JpegDecoderConfig::new();
+        let tri_ref = tri_cfg
+            .clone()
+            .decode(&base_jpeg)
+            .unwrap()
+            .pixels()
+            .as_contiguous_bytes()
+            .unwrap()
+            .to_vec();
+        let dyn_cfg: &dyn DynDecoderConfig = &tri_cfg;
+        let mut dyn_inc = dyn_cfg
+            .dyn_job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut sink = CollectSink::new(7);
+        let mut delivered = 0usize;
+        loop {
+            let offset = dyn_inc
+                .requested()
+                .first()
+                .map(|r| match *r {
+                    zencodec::decode::InputRequest::AtLeast { offset, .. } => offset as usize,
+                    zencodec::decode::InputRequest::Range(r) => r.offset as usize,
+                    _ => 0,
+                })
+                .unwrap_or(0);
+            if delivered < base_jpeg.len() && offset >= delivered {
+                delivered = (delivered + 41).min(base_jpeg.len());
+            }
+            let mut input = Input::new(
+                offset as u64,
+                &base_jpeg[offset.min(base_jpeg.len())..delivered],
+            );
+            if delivered >= base_jpeg.len() {
+                input.total_len = Some(base_jpeg.len() as u64);
+            }
+            let prog = dyn_inc.step(input, &mut sink, None).unwrap();
+            match prog.event {
+                Event::Need => {
+                    if prog.consumed == 0 && delivered < base_jpeg.len() {
+                        delivered = (delivered + 41).min(base_jpeg.len());
+                    }
+                }
+                Event::Done(done) => {
+                    assert_eq!(done.width, 48);
+                    assert_eq!(done.height, 40);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            sink.pixels, tri_ref,
+            "dyn_incremental_decoder Triangle mismatch"
+        );
+    }
+
+    #[test]
+    fn incremental_restart_markers_post_scan_exif_rgbf32_and_limits_match_oneshot() {
+        use zencodec::decode::Decode as _;
+
+        // 1) Baseline with DRI restart markers (restart_interval = 1) streams before EOF
+        let pixels = make_pattern_rgb(64, 48);
+        let dri_cfg = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+            .progressive(false)
+            .restart_mcu_rows(1);
+        let mut enc = dri_cfg
+            .encode_from_bytes(64, 48, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(bytemuck::cast_slice(&pixels), enough::Unstoppable)
+            .unwrap();
+        let dri_jpeg = enc.finish().unwrap();
+
+        let mut nn_cfg = JpegDecoderConfig::new();
+        nn_cfg.inner_mut().chroma_upsampling = crate::decode::ChromaUpsampling::NearestNeighbor;
+        let dri_ref = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .decoder(Cow::Borrowed(&dri_jpeg), &[ZenPixelFormat::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap()
+            .pixels()
+            .as_contiguous_bytes()
+            .unwrap()
+            .to_vec();
+        for &chunk_size in &[dri_jpeg.len(), 64, 7, 1] {
+            let mut inc = nn_cfg
+                .clone()
+                .job()
+                .with_orientation(zencodec::OrientationHint::Preserve)
+                .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                .unwrap();
+            let (sink, _, before_eof) = drive_incremental(&mut inc, &dri_jpeg, chunk_size, 8);
+            assert_eq!(sink.pixels, dri_ref, "DRI chunk_size={chunk_size}");
+            if chunk_size <= 64 {
+                assert!(before_eof, "DRI baseline should emit before EOF");
+            }
+        }
+
+        // 2) Post-scan APP1 EXIF orientation=6 right before EOI under OrientationHint::Correct
+        let base_48x32 = encode_baseline(48, 32, ChromaSubsampling::Quarter);
+        assert!(base_48x32.ends_with(&[0xFF, 0xD9]));
+        let exif_tiff = Exif::build()
+            .orientation(crate::encode::exif::Orientation::Rotate90)
+            .to_bytes()
+            .unwrap();
+        let mut app1_payload = b"Exif\0\0".to_vec();
+        app1_payload.extend_from_slice(&exif_tiff);
+        let mut post_scan_exif_jpeg = base_48x32[..base_48x32.len() - 2].to_vec();
+        post_scan_exif_jpeg.extend_from_slice(&[0xFF, 0xE1]);
+        post_scan_exif_jpeg.extend_from_slice(&((app1_payload.len() + 2) as u16).to_be_bytes());
+        post_scan_exif_jpeg.extend_from_slice(&app1_payload);
+        post_scan_exif_jpeg.extend_from_slice(&[0xFF, 0xD9]);
+
+        let oriented_oneshot = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Correct)
+            .decoder(
+                Cow::Borrowed(&post_scan_exif_jpeg),
+                &[ZenPixelFormat::RGB8_SRGB],
+            )
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!(oriented_oneshot.width(), 32);
+        assert_eq!(oriented_oneshot.height(), 48);
+        let mut inc_orient = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Correct)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (sink, done, _) = drive_incremental(&mut inc_orient, &post_scan_exif_jpeg, 19, 7);
+        assert_eq!((done.width, done.height), (32, 48));
+        assert_eq!(
+            sink.pixels,
+            oriented_oneshot.pixels().as_contiguous_bytes().unwrap()
+        );
+
+        // 3) RGBF32 preference stays exact RGBF32 (never upgraded to RGBAF32)
+        let rgbf32_oneshot = JpegDecoderConfig::new()
+            .job()
+            .decoder(Cow::Borrowed(&base_48x32), &[ZenPixelFormat::RGBF32_LINEAR])
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!(
+            rgbf32_oneshot.pixels().format().clone(),
+            ZenPixelFormat::RGBF32_LINEAR
+        );
+        let mut inc_f32 = JpegDecoderConfig::new()
+            .job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGBF32_LINEAR])
+            .unwrap();
+        let (sink_f32, done_f32, _) = drive_incremental(&mut inc_f32, &base_48x32, 31, 5);
+        assert_eq!(done_f32.native_format, ZenPixelFormat::RGBF32_LINEAR);
+        assert_eq!(
+            sink_f32.pixels,
+            rgbf32_oneshot.pixels().as_contiguous_bytes().unwrap()
+        );
+
+        // 4) Resource limits enforced on BOTH streaming and config-selected buffered paths
+        let tiny_w = ResourceLimits::none().with_max_width(16);
+        let mut inc_w = JpegDecoderConfig::new()
+            .job()
+            .with_limits(tiny_w)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut sink_err = CollectSink::new(16);
+        let mut inp = Input::new(0, &base_48x32);
+        inp.total_len = Some(base_48x32.len() as u64);
+        assert!(matches!(
+            inc_w.step(inp, &mut sink_err, None),
+            Err(zencodec::decode::StepError::Codec(_))
+        ));
+        // Poisoned after error -> subsequent step returns Finished
+        assert!(matches!(
+            inc_w.step(Input::empty(), &mut sink_err, None),
+            Err(zencodec::decode::StepError::Finished)
+        ));
+
+        let tiny_in = ResourceLimits::none().with_max_input_bytes(16);
+        let mut inc_in = JpegDecoderConfig::new()
+            .job()
+            .with_limits(tiny_in)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut inp2 = Input::new(0, &base_48x32);
+        inp2.total_len = Some(base_48x32.len() as u64);
+        assert!(matches!(
+            inc_in.step(inp2, &mut sink_err, None),
+            Err(zencodec::decode::StepError::Codec(_))
+        ));
+
+        // 5) Call pulse cancellation returns StepError::Cancelled
+        struct AlwaysCancel;
+        impl enough::Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+        let cancel_pulse = zencodec::how_far::StopOnly::new(AlwaysCancel);
+        let mut inc_cancel = JpegDecoderConfig::new()
+            .job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut inp3 = Input::new(0, &base_48x32);
+        inp3.total_len = Some(base_48x32.len() as u64);
+        assert!(matches!(
+            inc_cancel.step(inp3, &mut sink_err, Some(&cancel_pulse)),
+            Err(zencodec::decode::StepError::Cancelled(
+                enough::StopReason::Cancelled
+            ))
+        ));
+
+        // 6) Sink error returns StepError::Sink and poisons decoder
+        struct FailingSink;
+        impl DecodeRowSink for FailingSink {
+            fn begin(&mut self, _: u32, _: u32, _: ZenPixelFormat) -> Result<(), SinkError> {
+                Ok(())
+            }
+            fn max_buffer_rows(&self) -> NonZeroU32 {
+                NonZeroU32::new(4).unwrap()
+            }
+            fn provide_next_buffer(
+                &mut self,
+                _: RowStrip,
+                _: ZenPixelFormat,
+            ) -> Result<PixelViewMut<'_>, SinkError> {
+                Err(SinkError::from("synthetic sink failure"))
+            }
+            fn finish(&mut self) -> Result<(), SinkError> {
+                Ok(())
+            }
+        }
+        let mut inc_sink = JpegDecoderConfig::new()
+            .job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut bad_sink = FailingSink;
+        let mut inp4 = Input::new(0, &base_48x32);
+        inp4.total_len = Some(base_48x32.len() as u64);
+        assert!(matches!(
+            inc_sink.step(inp4, &mut bad_sink, None),
+            Err(zencodec::decode::StepError::Sink(_))
+        ));
+        assert!(matches!(
+            inc_sink.step(Input::empty(), &mut bad_sink, None),
+            Err(zencodec::decode::StepError::Finished)
+        ));
+
+        // 7) Non-interleaved 3-scan baseline JPEG falls back to exact one-shot decode
+        let ni_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata/non_interleaved/ni420_88x54.jpg");
+        let ni_jpeg = std::fs::read(&ni_path)
+            .unwrap_or_else(|e| panic!("read fixture {}: {e}", ni_path.display()));
+        let ni_oneshot = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .decoder(Cow::Borrowed(&ni_jpeg), &[ZenPixelFormat::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap();
+        let mut inc_ni = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (sink_ni, done_ni, _) = drive_incremental(&mut inc_ni, &ni_jpeg, 29, 5);
+        assert_eq!((done_ni.width, done_ni.height), (88, 54));
+        assert_eq!(
+            sink_ni.pixels,
+            ni_oneshot.pixels().as_contiguous_bytes().unwrap(),
+            "non-interleaved 4:2:0 must match one-shot 0-bit exact"
+        );
+
+        // 8) Truncated JPEG under Strict (and truncated header under default Balanced)
+        //    errors cleanly and poisons decoder
+        for (label, strict, truncated) in [
+            (
+                "strict_scan_trunc",
+                true,
+                &base_48x32[..base_48x32.len() / 3],
+            ),
+            ("balanced_header_trunc", false, &base_48x32[..12]),
+        ] {
+            let mut trunc_cfg = JpegDecoderConfig::new();
+            if strict {
+                trunc_cfg.inner_mut().strictness = crate::decode::Strictness::Strict;
+            }
+            let mut inc_trunc = trunc_cfg
+                .job()
+                .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                .unwrap();
+            let mut trunc_sink = CollectSink::new(8);
+            let mut inp_t = Input::new(0, truncated);
+            inp_t.total_len = Some(truncated.len() as u64);
+            let mut got_err = false;
+            for _ in 0..8 {
+                match inc_trunc.step(inp_t, &mut trunc_sink, None) {
+                    Err(zencodec::decode::StepError::Codec(_)) => {
+                        got_err = true;
+                        break;
+                    }
+                    Ok(p) => {
+                        let off = (inp_t.offset as usize + p.consumed).min(truncated.len());
+                        inp_t = Input::new(off as u64, &truncated[off..]);
+                        inp_t.total_len = Some(truncated.len() as u64);
+                        if matches!(p.event, Event::Done(_)) {
+                            break;
+                        }
+                    }
+                    Err(other) => panic!("unexpected truncation error ({label}): {other:?}"),
+                }
+            }
+            assert!(got_err, "expected truncation error for {label}");
+            assert!(matches!(
+                inc_trunc.step(Input::empty(), &mut trunc_sink, None),
+                Err(zencodec::decode::StepError::Finished)
+            ));
+        }
+
+        // 9) Effective limit consistency across streaming, buffered fallback, and one-shot:
+        //    (a) DecodeConfig::max_memory(0) == unlimited works on both streaming and buffered.
+        let mut unlimited_nn = JpegDecoderConfig::new();
+        unlimited_nn.inner_mut().chroma_upsampling =
+            crate::decode::ChromaUpsampling::NearestNeighbor;
+        unlimited_nn.inner_mut().max_memory = 0;
+        let base_48x32_ref = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .decoder(Cow::Borrowed(&base_48x32), &[ZenPixelFormat::RGB8_SRGB])
+            .unwrap()
+            .decode()
+            .unwrap()
+            .pixels()
+            .as_contiguous_bytes()
+            .unwrap()
+            .to_vec();
+        let mut inc_unlim_stream = unlimited_nn
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (sink_u1, done_u1, _) = drive_incremental(&mut inc_unlim_stream, &base_48x32, 37, 8);
+        assert_eq!((done_u1.width, done_u1.height), (48, 32));
+        assert_eq!(sink_u1.pixels, base_48x32_ref);
+
+        let mut unlimited_buf = JpegDecoderConfig::new();
+        unlimited_buf.inner_mut().max_memory = 0;
+        let mut inc_unlim_buf = unlimited_buf
+            .job()
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (_, done_u2, _) = drive_incremental(&mut inc_unlim_buf, &base_48x32, 37, 8);
+        assert_eq!((done_u2.width, done_u2.height), (48, 32));
+
+        //    (a2) Explicit zencodec job caps `Some(0)` MUST refuse (unlike native
+        //         DecodeConfig 0 == unlimited) across streaming, buffered, and one-shot.
+        let zero_mem = ResourceLimits::none().with_max_memory(0);
+        let zero_px = ResourceLimits::none().with_max_pixels(0);
+        for (label, lim, expected_kind) in [
+            ("job_max_memory_0", zero_mem, zencodec::LimitKind::Memory),
+            ("job_max_pixels_0", zero_px, zencodec::LimitKind::Pixels),
+        ] {
+            // One-shot job
+            let os_err = JpegDecoderConfig::new()
+                .job()
+                .with_limits(lim)
+                .decoder(Cow::Borrowed(&base_48x32), &[ZenPixelFormat::RGB8_SRGB])
+                .unwrap()
+                .decode()
+                .expect_err(&format!("one-shot must reject {label}"));
+            assert_eq!(
+                zencodec::CodecErrorExt::error_category(&os_err),
+                Some(zencodec::ErrorCategory::Resource(
+                    zencodec::ResourceError::Limits(expected_kind)
+                )),
+                "one-shot category for {label}"
+            );
+
+            // Streaming + config-selected buffered incremental
+            for (route, mut dec) in [
+                (
+                    "stream",
+                    nn_cfg
+                        .clone()
+                        .job()
+                        .with_limits(lim)
+                        .with_orientation(zencodec::OrientationHint::Preserve)
+                        .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                        .unwrap(),
+                ),
+                (
+                    "buffered",
+                    JpegDecoderConfig::new()
+                        .job()
+                        .with_limits(lim)
+                        .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                        .unwrap(),
+                ),
+            ] {
+                let mut s = CollectSink::new(8);
+                let mut inp = Input::new(0, &base_48x32);
+                inp.total_len = Some(base_48x32.len() as u64);
+                let mut hit = false;
+                for _ in 0..8 {
+                    match dec.step(inp, &mut s, None) {
+                        Err(zencodec::decode::StepError::Codec(e)) => {
+                            assert_eq!(
+                                zencodec::CodecErrorExt::error_category(&e),
+                                Some(zencodec::ErrorCategory::Resource(
+                                    zencodec::ResourceError::Limits(expected_kind)
+                                )),
+                                "{route} category for {label}"
+                            );
+                            hit = true;
+                            break;
+                        }
+                        Ok(p) => {
+                            let off = (inp.offset as usize + p.consumed).min(base_48x32.len());
+                            inp = Input::new(off as u64, &base_48x32[off..]);
+                            inp.total_len = Some(base_48x32.len() as u64);
+                        }
+                        Err(other) => panic!("unexpected {route} error for {label}: {other:?}"),
+                    }
+                }
+                assert!(hit, "{route} must reject {label}");
+            }
+        }
+
+        //    (b) Config cap 100 + job cap 10_000 resolves to 10_000 on BOTH streaming and
+        //        config-selected fallback (matching one-shot build_decode_config), whereas
+        //        config cap 100 + no job override rejects 48x32 on BOTH routes.
+        let raised = ResourceLimits::none().with_max_pixels(10_000);
+        let mut cfg_cap_nn = JpegDecoderConfig::new();
+        cfg_cap_nn.inner_mut().chroma_upsampling = crate::decode::ChromaUpsampling::NearestNeighbor;
+        cfg_cap_nn.inner_mut().max_pixels = 100;
+        let mut cfg_cap_buf = JpegDecoderConfig::new();
+        cfg_cap_buf.inner_mut().max_pixels = 100;
+        let mut inc_raise_stream = cfg_cap_nn
+            .clone()
+            .job()
+            .with_limits(raised)
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (_, done_rs, _) = drive_incremental(&mut inc_raise_stream, &base_48x32, 64, 8);
+        assert_eq!((done_rs.width, done_rs.height), (48, 32));
+
+        let mut inc_raise_buf = cfg_cap_buf
+            .clone()
+            .job()
+            .with_limits(raised)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let (_, done_rb, _) = drive_incremental(&mut inc_raise_buf, &base_48x32, 64, 8);
+        assert_eq!((done_rb.width, done_rb.height), (48, 32));
+
+        for (label, mut dec) in [
+            (
+                "stream_cfg_cap_100",
+                cfg_cap_nn
+                    .job()
+                    .with_orientation(zencodec::OrientationHint::Preserve)
+                    .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                    .unwrap(),
+            ),
+            (
+                "buf_cfg_cap_100",
+                cfg_cap_buf
+                    .job()
+                    .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+                    .unwrap(),
+            ),
+        ] {
+            let mut s = CollectSink::new(8);
+            let mut inp = Input::new(0, &base_48x32);
+            inp.total_len = Some(base_48x32.len() as u64);
+            let mut failed_with_codec = false;
+            for _ in 0..8 {
+                match dec.step(inp, &mut s, None) {
+                    Err(zencodec::decode::StepError::Codec(_)) => {
+                        failed_with_codec = true;
+                        break;
+                    }
+                    Ok(p) => {
+                        let off = (inp.offset as usize + p.consumed).min(base_48x32.len());
+                        inp = Input::new(off as u64, &base_48x32[off..]);
+                        inp.total_len = Some(base_48x32.len() as u64);
+                    }
+                    Err(other) => panic!("unexpected error ({label}): {other:?}"),
+                }
+            }
+            assert!(
+                failed_with_codec,
+                "expected pixel cap rejection for {label}"
+            );
+        }
+
+        // 10) Post-scan COM segment growth is admitted against max_memory_bytes
+        let mut post_scan_jpeg = base_48x32[..base_48x32.len() - 2].to_vec();
+        let com_payload = vec![b'X'; 4096];
+        let com_len = (com_payload.len() + 2) as u16;
+        post_scan_jpeg.extend_from_slice(&[0xFF, 0xFE]);
+        post_scan_jpeg.extend_from_slice(&com_len.to_be_bytes());
+        post_scan_jpeg.extend_from_slice(&com_payload);
+        post_scan_jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        // Budget large enough to stream the 48x32 pixels & header, too small for a 4 KiB post-scan COM.
+        let tight_mem = ResourceLimits::none().with_max_memory(3500);
+        let mut inc_post_com = nn_cfg
+            .clone()
+            .job()
+            .with_limits(tight_mem)
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut com_sink = CollectSink::new(8);
+        let mut off = 0usize;
+        let mut hit_mem_limit = false;
+        for _ in 0..256 {
+            let end = (off + 128).min(post_scan_jpeg.len());
+            let mut inp = Input::new(off as u64, &post_scan_jpeg[off..end]);
+            inp.total_len = Some(post_scan_jpeg.len() as u64);
+            match inc_post_com.step(inp, &mut com_sink, None) {
+                Ok(p) => {
+                    off += p.consumed;
+                    if matches!(p.event, Event::Done(_)) {
+                        break;
+                    }
+                }
+                Err(zencodec::decode::StepError::Codec(e)) => {
+                    assert_eq!(
+                        zencodec::CodecErrorExt::error_category(&e),
+                        Some(zencodec::ErrorCategory::Resource(
+                            zencodec::ResourceError::Limits(zencodec::LimitKind::Memory)
+                        ))
+                    );
+                    hit_mem_limit = true;
+                    break;
+                }
+                Err(other) => panic!("unexpected post-scan COM error: {other:?}"),
+            }
+        }
+        assert!(
+            hit_mem_limit,
+            "post-scan COM growth must hit Memory limit before allocation"
+        );
+
+        // 11) Mid-decode cancellation witness (trips inside decode, not on entry)
+        struct CancelAfterChecks {
+            remaining: core::sync::atomic::AtomicUsize,
+        }
+        impl enough::Stop for CancelAfterChecks {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                let mut cur = self.remaining.load(core::sync::atomic::Ordering::Relaxed);
+                loop {
+                    if cur == 0 {
+                        return Err(enough::StopReason::TimedOut);
+                    }
+                    match self.remaining.compare_exchange_weak(
+                        cur,
+                        cur - 1,
+                        core::sync::atomic::Ordering::Relaxed,
+                        core::sync::atomic::Ordering::Relaxed,
+                    ) {
+                        Ok(_) => return Ok(()),
+                        Err(next) => cur = next,
+                    }
+                }
+            }
+        }
+        let mid_pulse = zencodec::how_far::StopOnly::new(CancelAfterChecks {
+            remaining: core::sync::atomic::AtomicUsize::new(3),
+        });
+        let mut inc_mid = nn_cfg
+            .clone()
+            .job()
+            .with_orientation(zencodec::OrientationHint::Preserve)
+            .into_incremental_decoder(&[ZenPixelFormat::RGB8_SRGB])
+            .unwrap();
+        let mut mid_sink = CollectSink::new(8);
+        let mut mid_off = 0usize;
+        let mut saw_mid_cancel = false;
+        for _ in 0..64 {
+            let end = (mid_off + 64).min(base_48x32.len());
+            let mut inp = Input::new(mid_off as u64, &base_48x32[mid_off..end]);
+            inp.total_len = Some(base_48x32.len() as u64);
+            match inc_mid.step(inp, &mut mid_sink, Some(&mid_pulse)) {
+                Ok(p) => {
+                    mid_off += p.consumed;
+                    if matches!(p.event, Event::Done(_)) {
+                        break;
+                    }
+                }
+                Err(zencodec::decode::StepError::Cancelled(enough::StopReason::TimedOut)) => {
+                    saw_mid_cancel = true;
+                    break;
+                }
+                Err(other) => panic!("expected mid-decode TimedOut cancellation, got {other:?}"),
+            }
+        }
+        assert!(saw_mid_cancel, "mid-decode call pulse must trip TimedOut");
+    }
+
+    #[cfg(feature = "ultrahdr")]
+    #[test]
+    fn incremental_ultrahdr_reconstruct_cancels_in_flight() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        use zencodec::decode::{
+            DecodeJob as _, DecodeRowSink, DecoderConfig as _, Event, IncrementalDecode as _,
+            Input, RowStrip, SinkError, StepError,
+        };
+        use zenpixels::{PixelBuf, PixelFormat as ZenPixelFormat, PixelViewMut};
+
+        // Build a synthetic Ultra HDR JPEG (32x32 linear HDR -> encode_ultrahdr_luma)
+        let mut hdr_bytes = Vec::with_capacity(32 * 32 * 16);
+        for y in 0..32u32 {
+            for x in 0..32u32 {
+                let r = (x as f32 / 31.0) * 2.5;
+                let g = (y as f32 / 31.0) * 1.8;
+                let b = 0.4_f32;
+                let a = 1.0_f32;
+                for c in [r, g, b, a] {
+                    hdr_bytes.extend_from_slice(&c.to_ne_bytes());
+                }
+            }
+        }
+        let hdr = PixelBuf::from_bytes(hdr_bytes, 32, 32, ZenPixelFormat::RGBAF32_LINEAR).unwrap();
+        let uhdr_jpeg = crate::ultrahdr::encode_ultrahdr_luma(&hdr).unwrap();
+
+        // Count how many stop checks a full ReconstructHdr decode performs, then trip inside
+        // the auxiliary gain-map decode / apply_gainmap phase (well past step entry).
+        struct CountingStop {
+            count: std::sync::Arc<AtomicUsize>,
+            limit: usize,
+        }
+        impl enough::Stop for CountingStop {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                let n = self.count.fetch_add(1, Ordering::Relaxed);
+                if n >= self.limit {
+                    Err(enough::StopReason::TimedOut)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        struct SinkStub;
+        impl DecodeRowSink for SinkStub {
+            fn begin(&mut self, _: u32, _: u32, _: ZenPixelFormat) -> Result<(), SinkError> {
+                Ok(())
+            }
+            fn max_buffer_rows(&self) -> core::num::NonZeroU32 {
+                core::num::NonZeroU32::new(16).unwrap()
+            }
+            fn provide_next_buffer(
+                &mut self,
+                _: RowStrip,
+                _: ZenPixelFormat,
+            ) -> Result<PixelViewMut<'_>, SinkError> {
+                unreachable!("should cancel before delivering HDR rows")
+            }
+            fn finish(&mut self) -> Result<(), SinkError> {
+                Ok(())
+            }
+        }
+
+        // First count total checks during full incremental ReconstructHdr decode.
+        let count_shared = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = zencodec::how_far::StopOnly::new(CountingStop {
+            count: std::sync::Arc::clone(&count_shared),
+            limit: usize::MAX,
+        });
+        let mut full_dec = JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: None,
+            })
+            .into_incremental_decoder(&[ZenPixelFormat::RGBAF32_LINEAR])
+            .unwrap();
+        let mut bs = CollectSink::new(32);
+        let mut off = 0usize;
+        loop {
+            let mut inp = Input::new(off as u64, &uhdr_jpeg[off..]);
+            inp.total_len = Some(uhdr_jpeg.len() as u64);
+            let p = full_dec.step(inp, &mut bs, Some(&counter)).unwrap();
+            off += p.consumed;
+            if matches!(p.event, Event::Done(_)) {
+                break;
+            }
+        }
+        let total_checks = count_shared.load(Ordering::Relaxed);
+        // Base decode + auxiliary gain-map decode + 32 apply_gainmap rows must perform > 32 checks.
+        assert!(
+            total_checks > 32,
+            "expected >32 stop checks across Ultra HDR decode + apply_gainmap, got {total_checks}"
+        );
+
+        // Trip near the end (inside apply_gainmap, well after entry and base decode!)
+        let late_trip = total_checks - 10;
+        let cancel_pulse = zencodec::how_far::StopOnly::new(CountingStop {
+            count: std::sync::Arc::new(AtomicUsize::new(0)),
+            limit: late_trip,
+        });
+        let mut dec = JpegDecoderConfig::new()
+            .job()
+            .with_gain_map_render(zencodec::GainMapRender::ReconstructHdr {
+                target_headroom: None,
+            })
+            .into_incremental_decoder(&[ZenPixelFormat::RGBAF32_LINEAR])
+            .unwrap();
+        let mut stub = SinkStub;
+        let mut inp = Input::new(0, &uhdr_jpeg);
+        inp.total_len = Some(uhdr_jpeg.len() as u64);
+        let mut got_cancel = false;
+        for _ in 0..8 {
+            match dec.step(inp, &mut stub, Some(&cancel_pulse)) {
+                Ok(p) => {
+                    let next = (inp.offset as usize + p.consumed).min(uhdr_jpeg.len());
+                    inp = Input::new(next as u64, &uhdr_jpeg[next..]);
+                    inp.total_len = Some(uhdr_jpeg.len() as u64);
+                    if matches!(p.event, Event::Done(_)) {
+                        break;
+                    }
+                }
+                Err(StepError::Cancelled(enough::StopReason::TimedOut)) => {
+                    got_cancel = true;
+                    break;
+                }
+                Err(other) => {
+                    panic!("expected Cancelled(TimedOut) from apply_gainmap, got {other:?}")
+                }
+            }
+        }
+        assert!(
+            got_cancel,
+            "in-flight Ultra HDR cancellation inside apply_gainmap must surface StepError::Cancelled"
+        );
+    }
+}
